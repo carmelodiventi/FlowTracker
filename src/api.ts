@@ -1,0 +1,87 @@
+/**
+ * Typed wrappers around Tauri invoke() calls.
+ * All functions map 1:1 to a #[tauri::command] in src-tauri/src/commands.rs.
+ */
+import { invoke } from "@tauri-apps/api/core";
+
+// ---------------------------------------------------------------------------
+// Types (mirror the Rust structs)
+// ---------------------------------------------------------------------------
+
+export interface Application {
+  id: number;
+  name: string;
+  process_name: string;
+  icon: string | null;
+  is_enabled: boolean;
+}
+
+export interface Session {
+  id: number;
+  app_id: number;
+  app_name: string;
+  start_time: string; // ISO-8601 UTC
+  end_time: string | null;
+  duration: number | null; // seconds
+  task_name: string | null;
+  status: string; // "active" | "pending" | "confirmed" | "idle"
+}
+
+export interface AppSummary {
+  app_name: string;
+  process_name: string;
+  total_secs: number;
+  session_count: number;
+}
+
+// ---------------------------------------------------------------------------
+// Application / Whitelist
+// ---------------------------------------------------------------------------
+
+export const listApplications = (): Promise<Application[]> =>
+  invoke("list_applications");
+
+export const upsertApplication = (
+  name: string,
+  process_name: string,
+  is_enabled: boolean
+): Promise<number> =>
+  invoke("upsert_application", { name, process_name, isEnabled: is_enabled });
+
+export const toggleApplication = (
+  id: number,
+  enabled: boolean
+): Promise<void> => invoke("toggle_application", { id, enabled });
+
+// ---------------------------------------------------------------------------
+// Sessions
+// ---------------------------------------------------------------------------
+
+export const listTodaySessions = (): Promise<Session[]> =>
+  invoke("list_today_sessions");
+
+export const listSessionsForDate = (date: string): Promise<Session[]> =>
+  invoke("list_sessions_for_date", { date });
+
+export const listPendingSessions = (): Promise<Session[]> =>
+  invoke("list_pending_sessions");
+
+export const nameSession = (id: number, task_name: string): Promise<void> =>
+  invoke("name_session", { id, taskName: task_name });
+
+// ---------------------------------------------------------------------------
+// Summary
+// ---------------------------------------------------------------------------
+
+export const dailySummary = (date: string): Promise<AppSummary[]> =>
+  invoke("daily_summary", { date });
+
+// ---------------------------------------------------------------------------
+// Settings
+// ---------------------------------------------------------------------------
+
+export const getSetting = (key: string): Promise<string> =>
+  invoke("get_setting", { key });
+
+export const setSetting = (key: string, value: string): Promise<void> =>
+  invoke("set_setting", { key, value });

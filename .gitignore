@@ -1,0 +1,22 @@
+# Rust build artifacts
+src-tauri/target/
+
+# Node / Vite
+node_modules/
+dist/
+
+# Tauri generated files
+src-tauri/gen/
+
+# macOS
+.DS_Store
+*.swp
+
+# Environment
+.env
+.env.local
+
+# IDE
+.idea/
+.vscode/settings.json
+*.iml
