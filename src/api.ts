@@ -53,6 +53,10 @@ export const toggleApplication = (
   enabled: boolean
 ): Promise<void> => invoke("toggle_application", { id, enabled });
 
+/** Enumerate all currently running GUI apps, upsert into DB, return updated list. */
+export const scanRunningApps = (): Promise<Application[]> =>
+  invoke("scan_running_apps");
+
 // ---------------------------------------------------------------------------
 // Sessions
 // ---------------------------------------------------------------------------

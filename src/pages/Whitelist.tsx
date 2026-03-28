@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
-import { listApplications, toggleApplication, upsertApplication } from "../api";
+import { listApplications, toggleApplication, scanRunningApps } from "../api";
 import type { Application } from "../api";
 
 export default function Whitelist() {
@@ -35,29 +35,12 @@ export default function Whitelist() {
     await toggleApplication(app.id, !app.is_enabled).catch(() => load());
   };
 
-  // Scan running apps via the Tauri shell — we list process names and upsert them
+  // Scan running apps via Tauri command (direct Rust ps call, no shell plugin needed).
   const handleScan = async () => {
     setScanning(true);
     try {
-      // Import dynamically to avoid issues on platforms where it's not available
-      const { Command } = await import("@tauri-apps/plugin-shell");
-      // macOS: ps -eo comm | sort -u
-      // Windows: tasklist /fo csv /nh
-      const isWin = navigator.userAgent.toLowerCase().includes("windows");
-      const cmd = isWin
-        ? Command.create("tasklist", ["/fo", "csv", "/nh"])
-        : Command.create("ps", ["-eo", "comm"]);
-      const output = await cmd.execute();
-      const lines: string[] = output.stdout.split("\n").map((l: string) => l.trim()).filter(Boolean);
-      const processNames: string[] = isWin
-        ? lines.map((l: string) => l.split(",")[0].replace(/"/g, "").replace(".exe", ""))
-        : [...new Set(lines.map((l: string) => l.split("/").pop() ?? l))];
-
-      for (const pn of processNames.slice(0, 50)) {
-        if (!pn || pn.length < 2) continue;
-        await upsertApplication(pn, pn, false).catch(() => {});
-      }
-      await load();
+      const updated = await scanRunningApps();
+      setApps(updated);
     } catch (e) {
       console.warn("Scan failed:", e);
     } finally {

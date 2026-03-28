@@ -100,6 +100,108 @@ pub fn toggle_application(
     Ok(())
 }
 
+/// Enumerate every GUI application currently running on macOS and upsert each
+/// one into the `applications` table (as disabled by default so the user can
+/// review and enable what they want to track).  Returns the refreshed list.
+///
+/// Uses `ps -eo comm` on macOS — no shell-plugin permissions required because
+/// this is a direct Rust `std::process::Command` call, not a frontend shell
+/// command.
+#[tauri::command]
+pub fn scan_running_apps(state: State<DbState>) -> Result<Vec<Application>, String> {
+    let names = collect_running_app_names()?;
+
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    for name in &names {
+        conn.execute(
+            "INSERT OR IGNORE INTO applications (name, process_name, is_enabled)
+             VALUES (?1, ?1, 0)",
+            params![name],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    // Return the full refreshed list.
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, name, process_name, icon, is_enabled
+             FROM   applications
+             ORDER  BY name",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let apps = stmt
+        .query_map([], |row| {
+            Ok(Application {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                process_name: row.get(2)?,
+                icon: row.get(3)?,
+                is_enabled: row.get::<_, i64>(4)? != 0,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(apps)
+}
+
+/// Returns unique GUI application names currently running.
+/// On macOS uses `ps -eo comm`.  On other platforms returns an empty list.
+fn collect_running_app_names() -> Result<Vec<String>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        // Use NSWorkspace via osascript to list only apps that have a dock icon
+        // (activationPolicy == 0 / NSApplicationActivationPolicyRegular).
+        // This gives proper localized display names (e.g. "Antigravity" instead of
+        // "Electron", "Code" instead of just the process binary) — the same names
+        // that active-win-pos-rs reports as `app_name`, so session tracking matches.
+        let script = r#"
+use framework "AppKit"
+set apps to current application's NSWorkspace's sharedWorkspace()'s runningApplications()
+set names to {}
+repeat with a in apps
+    try
+        if (a's activationPolicy() as integer) is 0 then
+            set aName to a's localizedName() as text
+            if aName is not "" then
+                set end of names to aName
+            end if
+        end if
+    end try
+end repeat
+return names
+"#;
+        let output = std::process::Command::new("osascript")
+            .args(["-e", script])
+            .output()
+            .map_err(|e| format!("osascript failed: {e}"))?;
+
+        if !output.status.success() {
+            let err = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("osascript error: {err}"));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut seen = std::collections::HashSet::new();
+        // osascript returns a comma-space separated list, e.g. "Finder, Code, Antigravity"
+        let names: Vec<String> = stdout
+            .trim()
+            .split(", ")
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty() && seen.insert(n.clone()))
+            .collect();
+
+        return Ok(names);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(vec![])
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Session commands
 // ---------------------------------------------------------------------------

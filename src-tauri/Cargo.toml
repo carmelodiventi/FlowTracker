@@ -40,4 +40,5 @@ panic      = "abort"
 strip      = true
 
 [patch.crates-io]
-tao = { version = "0.35.0" }
+tao = { path = "../tao-patched" }
+
