@@ -112,10 +112,32 @@ pub fn scan_running_apps(state: State<DbState>) -> Result<Vec<Application>, Stri
     let names = collect_running_app_names()?;
 
     let conn = state.0.lock().map_err(|e| e.to_string())?;
+
+    // Remove apps the user has NOT yet enabled (is_enabled = 0) that are no
+    // longer in the freshly-scanned list.  Clears stale entries from previous
+    // ps-based scans.  Apps the user explicitly enabled are always preserved.
+    if !names.is_empty() {
+        let placeholders: String = names
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", i + 1))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "DELETE FROM applications WHERE is_enabled = 0 AND process_name NOT IN ({placeholders})"
+        );
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            names.iter().map(|n| n as &dyn rusqlite::ToSql).collect();
+        conn.execute(&sql, params_refs.as_slice())
+            .map_err(|e| e.to_string())?;
+    }
+
+    // Upsert every discovered app (never downgrades an already-enabled app).
     for name in &names {
         conn.execute(
-            "INSERT OR IGNORE INTO applications (name, process_name, is_enabled)
-             VALUES (?1, ?1, 0)",
+            "INSERT INTO applications (name, process_name, is_enabled)
+             VALUES (?1, ?1, 0)
+             ON CONFLICT(process_name) DO UPDATE SET name = excluded.name",
             params![name],
         )
         .map_err(|e| e.to_string())?;
