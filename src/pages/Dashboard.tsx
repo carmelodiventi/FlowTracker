@@ -16,6 +16,7 @@ import {
 } from "../api";
 import type { Session, AppSummary, WorkSession, Project } from "../api";
 import ExportModal from "../components/ExportModal";
+import { suggestWorkSessionName, generateInvoiceDescription } from "../lib/ai";
 
 // ─── Color helpers ────────────────────────────────────────────────────────────
 
@@ -114,14 +115,21 @@ export default function Dashboard() {
   const [wsExpandedSessions, setWsExpandedSessions] = useState<
     Map<string, Session[]>
   >(new Map());
+  const [suggestingWsId, setSuggestingWsId] = useState<string | null>(null);
+  const [invoiceDescWsId, setInvoiceDescWsId] = useState<string | null>(null);
+  const [invoiceDescText, setInvoiceDescText] = useState<string>("");
+  const [generatingInvoiceWsId, setGeneratingInvoiceWsId] = useState<string | null>(null);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isToday = date === todayISO();
 
   // ── Data loading ────────────────────────────────────────────────────────────
 
+  const initialLoadDone = useRef(false);
+
   const load = useCallback(async () => {
-    setLoading(true);
+    // Only show the full-page spinner on the very first load
+    if (!initialLoadDone.current) setLoading(true);
     try {
       const [sess, summ, ws, projs] = await Promise.all([
         listSessionsForDate(date).catch(() => [] as Session[]),
@@ -134,11 +142,15 @@ export default function Dashboard() {
       setWorkSessions(ws);
       setProjects(projs);
     } finally {
-      setLoading(false);
+      if (!initialLoadDone.current) {
+        initialLoadDone.current = true;
+        setLoading(false);
+      }
     }
   }, [date]);
 
   useEffect(() => {
+    initialLoadDone.current = false;
     load();
     setSelected(new Set());
   }, [load]);
@@ -286,6 +298,42 @@ export default function Dashboard() {
     setEditWsName("");
     setEditWsProjectId(null);
     await load();
+  };
+
+  const handleSuggestWsName = async (ws: WorkSession) => {
+    setSuggestingWsId(ws.id);
+    // Build app usage list from sessions assigned to this work session
+    const wsSessions = wsExpandedSessions.get(ws.id) ?? await listSessionsForWorkSession(ws.id).catch(() => [] as Session[]);
+    const appMap = new Map<string, number>();
+    for (const s of wsSessions) {
+      appMap.set(s.app_name, (appMap.get(s.app_name) ?? 0) + (s.duration ?? 0));
+    }
+    // Fallback: use daily summary if no sessions loaded
+    const usages = appMap.size > 0
+      ? Array.from(appMap.entries()).map(([app, duration_secs]) => ({ app, duration_secs }))
+      : summary.map((s) => ({ app: s.app_name, duration_secs: s.total_secs }));
+
+    const suggestion = await suggestWorkSessionName(usages);
+    setSuggestingWsId(null);
+    if (suggestion) {
+      setEditWsName(suggestion);
+    }
+  };
+
+  const handleGenerateInvoiceDesc = async (ws: WorkSession) => {
+    setGeneratingInvoiceWsId(ws.id);
+    setInvoiceDescWsId(ws.id);
+    setInvoiceDescText("");
+    const wsSessions = wsExpandedSessions.get(ws.id) ?? await listSessionsForWorkSession(ws.id).catch(() => [] as Session[]);
+    const apps = [...new Set(wsSessions.map((s) => s.app_name))];
+    const desc = await generateInvoiceDescription({
+      sessionName: ws.name,
+      projectName: ws.project_name ?? undefined,
+      durationHours: ws.total_secs / 3600,
+      apps,
+    });
+    setGeneratingInvoiceWsId(null);
+    setInvoiceDescText(desc ?? "Could not generate description — check your AI settings.");
   };
 
   const handleToggleWsCollapse = async (wsId: string) => {
@@ -1255,6 +1303,19 @@ export default function Dashboard() {
                                   Save
                                 </button>
                                 <button
+                                  onClick={() => handleSuggestWsName(ws)}
+                                  disabled={suggestingWsId === ws.id}
+                                  title="Suggest name with AI"
+                                  style={{
+                                    ...pillBtn("rgba(88,166,255,0.12)", "#58a6ff"),
+                                    border: "1px solid rgba(88,166,255,0.3)",
+                                    opacity: suggestingWsId === ws.id ? 0.6 : 1,
+                                    cursor: suggestingWsId === ws.id ? "wait" : "pointer",
+                                  }}
+                                >
+                                  {suggestingWsId === ws.id ? "…" : "✨ Suggest"}
+                                </button>
+                                <button
                                   onClick={() => setEditingWsId(null)}
                                   style={pillBtn(
                                     "rgba(255,255,255,0.08)",
@@ -1361,6 +1422,36 @@ export default function Dashboard() {
                                 </span>
                               </button>
 
+                              {/* AI: Invoice description */}
+                              <button
+                                onClick={() => {
+                                  if (invoiceDescWsId === ws.id) {
+                                    setInvoiceDescWsId(null);
+                                    setInvoiceDescText("");
+                                  } else {
+                                    handleGenerateInvoiceDesc(ws);
+                                  }
+                                }}
+                                disabled={generatingInvoiceWsId === ws.id}
+                                title="Generate invoice description with AI"
+                                style={{
+                                  background: invoiceDescWsId === ws.id ? "rgba(88,166,255,0.1)" : "none",
+                                  border: "none",
+                                  color: invoiceDescWsId === ws.id ? "#58a6ff" : "#484f58",
+                                  cursor: generatingInvoiceWsId === ws.id ? "wait" : "pointer",
+                                  padding: 4,
+                                  borderRadius: 4,
+                                  display: "flex",
+                                  alignItems: "center",
+                                  fontSize: 14,
+                                  transition: "color 0.12s",
+                                }}
+                                onMouseEnter={(e) => { if (invoiceDescWsId !== ws.id) e.currentTarget.style.color = "#8b949e"; }}
+                                onMouseLeave={(e) => { if (invoiceDescWsId !== ws.id) e.currentTarget.style.color = "#484f58"; }}
+                              >
+                                {generatingInvoiceWsId === ws.id ? "…" : "✨"}
+                              </button>
+
                               <button
                                 onClick={() => handleDeleteWorkSession(ws.id)}
                                 title="Delete task"
@@ -1392,6 +1483,37 @@ export default function Dashboard() {
                             </>
                           )}
                         </div>
+
+                        {/* ── AI Invoice Description panel ── */}
+                        {invoiceDescWsId === ws.id && (
+                          <div style={{
+                            margin: "0 0 2px",
+                            padding: "12px 16px",
+                            background: "rgba(88,166,255,0.06)",
+                            borderTop: "1px solid rgba(88,166,255,0.15)",
+                            borderBottom: "1px solid rgba(88,166,255,0.1)",
+                          }}>
+                            <div style={{ fontSize: 11, color: "#58a6ff", fontWeight: 600, marginBottom: 6, letterSpacing: "0.04em", textTransform: "uppercase" }}>
+                              ✨ Invoice Description
+                            </div>
+                            {generatingInvoiceWsId === ws.id ? (
+                              <div style={{ fontSize: 13, color: "#8b949e", fontStyle: "italic" }}>Generating…</div>
+                            ) : (
+                              <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                                <p style={{ flex: 1, margin: 0, fontSize: 13, color: "#c9d1d9", lineHeight: 1.6 }}>
+                                  {invoiceDescText}
+                                </p>
+                                <button
+                                  onClick={() => navigator.clipboard.writeText(invoiceDescText)}
+                                  title="Copy to clipboard"
+                                  style={{ background: "none", border: "1px solid #414752", borderRadius: 4, padding: "4px 8px", color: "#8b949e", cursor: "pointer", fontSize: 11, whiteSpace: "nowrap", flexShrink: 0 }}
+                                >
+                                  Copy
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
 
                         {/* ── Expanded sessions list ── */}
                         {isExpanded && (
