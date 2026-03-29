@@ -14,6 +14,38 @@ mod watcher;
 
 use commands::DbState;
 use std::sync::{Arc, Mutex};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::Manager;
+
+/// Build (or rebuild) the tray menu, querying the DB for the live session.
+fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let db_state = app.state::<DbState>();
+    let conn = db_state.0.lock().unwrap_or_else(|e| e.into_inner());
+
+    // Query the current active session.
+    let status_line: String = conn
+        .query_row(
+            "SELECT a.name FROM sessions s \
+             JOIN applications a ON s.app_id = a.id \
+             WHERE s.status = 'active' \
+             ORDER BY s.start_time DESC LIMIT 1",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .map(|app_name| format!("● {}", app_name))
+        .unwrap_or_else(|_| "○ Not tracking".to_string());
+
+    drop(conn); // release lock before building menu
+
+    let status = MenuItem::with_id(app, "status", status_line, false, None::<&str>)?;
+    let sep1 = PredefinedMenuItem::separator(app)?;
+    let show = MenuItem::with_id(app, "show", "Show Dashboard", true, None::<&str>)?;
+    let sep2 = PredefinedMenuItem::separator(app)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit Flow Tracker", true, None::<&str>)?;
+
+    Menu::with_items(app, &[&status, &sep1, &show, &sep2, &quit])
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -46,6 +78,51 @@ pub fn run() {
             .inner_size(1200.0, 800.0)
             .resizable(true)
             .build()?;
+
+            // ── System tray ──────────────────────────────────────────────────
+            let menu = build_tray_menu(app.handle())?;
+            let _tray = TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .menu(&menu)
+                .tooltip("Flow Tracker")
+                // Rebuild menu with live session on every click so it's always fresh.
+                .on_tray_icon_event({
+                    let handle = app.handle().clone();
+                    move |tray, event| {
+                        if let TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } = event
+                        {
+                            // Left-click: show & focus the window.
+                            if let Some(win) = handle.get_webview_window("main") {
+                                let _ = win.show();
+                                let _ = win.set_focus();
+                            }
+                        }
+                        // Rebuild menu on any interaction so status is current.
+                        if let Ok(m) = build_tray_menu(tray.app_handle()) {
+                            let _ = tray.set_menu(Some(m));
+                        }
+                    }
+                })
+                .on_menu_event({
+                    let handle = app.handle().clone();
+                    move |_app, event| match event.id.as_ref() {
+                        "show" => {
+                            if let Some(win) = handle.get_webview_window("main") {
+                                let _ = win.show();
+                                let _ = win.set_focus();
+                            }
+                        }
+                        "quit" => {
+                            handle.exit(0);
+                        }
+                        _ => {}
+                    }
+                })
+                .build(app)?;
 
             // Start background watcher.
             watcher::start_watcher(Arc::clone(&shared_db), app.handle().clone());

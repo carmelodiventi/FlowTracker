@@ -4,6 +4,7 @@
   "description": "Default capabilities granted to the main Flow Tracker window.",
   "windows": ["main"],
   "permissions": [
-    "core:default"
+    "core:default",
+    "core:tray:default"
   ]
 }
