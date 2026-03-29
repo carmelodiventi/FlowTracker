@@ -7,6 +7,7 @@ import {
   deleteSession,
   listTaskNames,
   renameTaskGroup,
+  deleteTaskGroup,
   listWorkSessions,
   createWorkSession,
   updateWorkSession,
@@ -97,6 +98,7 @@ export default function Dashboard() {
   const [taskNames, setTaskNames] = useState<string[]>([]);
   const [editingGroup, setEditingGroup] = useState<string | null>(null); // current task_name being renamed
   const [editGroupName, setEditGroupName] = useState("");
+  const [confirmDeleteGroup, setConfirmDeleteGroup] = useState<string | null>(null);
 
   // Projects state
   const [projects, setProjects] = useState<Project[]>([]);
@@ -292,6 +294,12 @@ export default function Dashboard() {
     await renameTaskGroup(oldName, trimmed).catch(console.error);
     setEditingGroup(null);
     setEditGroupName("");
+    await load();
+  };
+
+  const handleDeleteGroup = async (name: string) => {
+    await deleteTaskGroup(name).catch(console.error);
+    setConfirmDeleteGroup(null);
     await load();
   };
 
@@ -865,6 +873,15 @@ export default function Dashboard() {
                                     >
                                       <span className="material-symbols-outlined" style={{ fontSize: 14 }}>edit</span>
                                     </button>
+                                    <button
+                                      onClick={() => setConfirmDeleteGroup(item.task_name)}
+                                      title="Delete group"
+                                      style={{ background: "none", border: "none", color: "#484f58", cursor: "pointer", padding: "2px 4px", borderRadius: 4, display: "flex", alignItems: "center" }}
+                                      onMouseEnter={(e) => (e.currentTarget.style.color = "#f85149")}
+                                      onMouseLeave={(e) => (e.currentTarget.style.color = "#484f58")}
+                                    >
+                                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>delete</span>
+                                    </button>
                                   </>
                                 )}
                               </div>
@@ -1311,6 +1328,48 @@ export default function Dashboard() {
                 }}
               >
                 Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Delete Group Confirm Dialog ── */}
+      {confirmDeleteGroup !== null && (
+        <div
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.72)",
+            display: "flex", alignItems: "center", justifyContent: "center", zIndex: 300,
+          }}
+          onClick={() => setConfirmDeleteGroup(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: "#161b22", borderRadius: 10, padding: "28px 32px",
+              border: "1px solid rgba(248,81,73,0.3)", maxWidth: 360, width: "100%",
+              display: "flex", flexDirection: "column", gap: 20,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span className="material-symbols-outlined" style={{ color: "#f85149", fontSize: 22 }}>delete</span>
+              <span style={{ fontSize: 15, fontWeight: 600, color: "#f6f6fc" }}>Delete group "{confirmDeleteGroup}"?</span>
+            </div>
+            <p style={{ fontSize: 13, color: "#8b949e", margin: 0, lineHeight: 1.5 }}>
+              The tag will be removed from all sessions in this group. The sessions themselves won't be deleted — they'll move to Unlabelled.
+            </p>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button
+                onClick={() => setConfirmDeleteGroup(null)}
+                style={{ padding: "8px 18px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.1)", background: "transparent", color: "#8b949e", fontSize: 13, cursor: "pointer" }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleDeleteGroup(confirmDeleteGroup)}
+                style={{ padding: "8px 18px", borderRadius: 6, border: "none", background: "#f85149", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+              >
+                Delete group
               </button>
             </div>
           </div>

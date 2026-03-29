@@ -165,3 +165,6 @@ export const listTaskNames = (): Promise<string[]> =>
 
 export const renameTaskGroup = (oldName: string, newName: string): Promise<void> =>
   invoke("rename_task_group", { oldName, newName });
+
+export const deleteTaskGroup = (name: string): Promise<void> =>
+  invoke("delete_task_group", { name });

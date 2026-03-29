@@ -788,3 +788,15 @@ pub fn rename_task_group(
     .map(|_| ())
     .map_err(|e| e.to_string())
 }
+
+/// Clear task_name from all sessions in a group, moving them back to "Unlabelled".
+#[tauri::command]
+pub fn delete_task_group(name: String, state: State<DbState>) -> Result<(), String> {
+    let conn = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    conn.execute(
+        "UPDATE sessions SET task_name = NULL WHERE task_name = ?1",
+        rusqlite::params![name],
+    )
+    .map(|_| ())
+    .map_err(|e| e.to_string())
+}
