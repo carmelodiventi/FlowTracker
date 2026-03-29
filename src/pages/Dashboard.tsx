@@ -4,6 +4,7 @@ import {
   dailySummary,
   listSessionsForDate,
   nameSession,
+  deleteSession,
   listWorkSessions,
   createWorkSession,
   deleteWorkSession,
@@ -87,6 +88,7 @@ export default function Dashboard() {
   const [editName, setEditName] = useState("");
   const [groupName, setGroupName] = useState("");
   const [showGroupDialog, setShowGroupDialog] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [liveSecs, setLiveSecs] = useState(0);
   const [loading, setLoading] = useState(true);
 
@@ -211,6 +213,12 @@ export default function Dashboard() {
     await nameSession(id, editName.trim()).catch(console.error);
     setEditingId(null);
     setEditName("");
+    await load();
+  };
+
+  const handleDeleteSession = async (id: number) => {
+    await deleteSession(id).catch(console.error);
+    setSelected((prev) => { const n = new Set(prev); n.delete(id); return n; });
     await load();
   };
 
@@ -560,24 +568,6 @@ export default function Dashboard() {
 
             {/* ── Session list ── */}
             <section style={{ marginBottom: 24 }}>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  marginBottom: 10,
-                }}
-              >
-                <span style={sectionLabel}>
-                  Sessioni{sessions.length > 0 ? ` (${sessions.length})` : ""}
-                </span>
-                {selected.size > 0 && (
-                  <span style={{ fontSize: 11, color: "#8b949e" }}>
-                    {selected.size} selezionat{selected.size > 1 ? "e" : "a"}
-                  </span>
-                )}
-              </div>
-
               {sessions.length === 0 ? (
                 <div
                   style={{
@@ -594,12 +584,166 @@ export default function Dashboard() {
                     timeline
                   </span>
                   <span style={{ fontSize: 13 }}>
-                    Nessuna sessione per {isToday ? "oggi" : date}
+                    No sessions for {isToday ? "today" : date}
                   </span>
                 </div>
               ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  {sessions.map((s) => {
+                <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+                  {/* ── Live session pinned at top ── */}
+                  {activeSession && (() => {
+                    const s = activeSession;
+                    const isSelected = selected.has(s.id);
+                    const isEditing = editingId === s.id;
+                    const linkedWs = workSessions.find((w) => w.id === s.work_session_id);
+                    return (
+                      <div style={{ marginBottom: 16 }}>
+                        <div style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          marginBottom: 8,
+                        }}>
+                          <span style={{
+                            width: 7, height: 7, borderRadius: "50%",
+                            background: "#6affc9",
+                            display: "inline-block",
+                            animation: "pulse 1.4s infinite",
+                          }} />
+                          <span style={{
+                            fontSize: 10,
+                            fontFamily: "Roboto Mono, monospace",
+                            fontWeight: 700,
+                            color: "#6affc9",
+                            letterSpacing: "0.12em",
+                            textTransform: "uppercase",
+                          }}>Now tracking</span>
+                        </div>
+                        <div
+                          key={s.id}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 10,
+                            padding: "12px 14px",
+                            background: "rgba(106,255,201,0.05)",
+                            borderRadius: 8,
+                            border: "1px solid rgba(106,255,201,0.25)",
+                            transition: "background 0.12s",
+                          }}
+                        >
+                          {/* Checkbox */}
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleSelect(s.id)}
+                            style={{ accentColor: "#58a6ff", flexShrink: 0, cursor: "pointer" }}
+                          />
+                          {/* App icon */}
+                          <span
+                            className="material-symbols-outlined"
+                            style={{ fontSize: 16, color: "#6affc9", flexShrink: 0 }}
+                          >
+                            {appIcon(s.app_name)}
+                          </span>
+                          {/* Time range */}
+                          <span style={{
+                            fontFamily: "Roboto Mono, monospace",
+                            fontSize: 11,
+                            color: "#6affc9",
+                            flexShrink: 0,
+                            minWidth: 50,
+                          }}>
+                            {fmtTime(s.start_time)} →
+                          </span>
+                          {/* App name + task */}
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            {isEditing ? (
+                              <input
+                                autoFocus
+                                value={editName}
+                                onChange={(e) => setEditName(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") handleRename(s.id);
+                                  if (e.key === "Escape") { setEditingId(null); setEditName(""); }
+                                }}
+                                onBlur={() => handleRename(s.id)}
+                                style={{
+                                  background: "#0d1117", border: "1px solid rgba(106,255,201,0.4)",
+                                  borderRadius: 4, color: "#f6f6fc", fontSize: 12,
+                                  padding: "3px 7px", outline: "none", width: "100%",
+                                }}
+                                placeholder="What are you working on?"
+                              />
+                            ) : (
+                              <span
+                                style={{
+                                  fontSize: 13, color: "#f6f6fc", fontWeight: 500,
+                                  display: "block", overflow: "hidden",
+                                  textOverflow: "ellipsis", whiteSpace: "nowrap",
+                                }}
+                              >
+                                {s.app_name}
+                                {s.task_name && (
+                                  <span style={{ color: "#6affc9", fontWeight: 400 }}>
+                                    {" · "}{s.task_name}
+                                  </span>
+                                )}
+                              </span>
+                            )}
+                          </div>
+                          {/* Live elapsed */}
+                          <span style={{
+                            fontFamily: "Roboto Mono, monospace",
+                            fontSize: 12, color: "#6affc9", fontWeight: 700, flexShrink: 0,
+                          }}>
+                            {fmtDuration(liveSecs)}
+                          </span>
+                          {/* Edit button */}
+                          <button
+                            onClick={() => { setEditingId(s.id); setEditName(s.task_name ?? ""); }}
+                            title="Name this session"
+                            style={{ background: "none", border: "none", cursor: "pointer", color: "#6affc9", padding: 2, flexShrink: 0 }}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: 15 }}>edit</span>
+                          </button>
+                          {linkedWs && (
+                            <span style={{
+                              fontSize: 10, padding: "1px 7px", borderRadius: 10,
+                              background: `${linkedWs.color}22`, color: linkedWs.color,
+                              border: `1px solid ${linkedWs.color}44`,
+                              fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0,
+                            }}>
+                              {linkedWs.name}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* ── Divider ── */}
+                  {activeSession && sessions.filter(s => s.status !== "active").length > 0 && (
+                    <div style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      marginBottom: 14,
+                    }}>
+                      <hr style={{ flex: 1, border: "none", borderTop: "1px solid rgba(255,255,255,0.07)", margin: 0 }} />
+                      <span style={{
+                        fontSize: 10, color: "#484f58",
+                        fontFamily: "Roboto Mono, monospace",
+                        letterSpacing: "0.1em", textTransform: "uppercase", flexShrink: 0,
+                      }}>
+                        Earlier today · {sessions.filter(s => s.status !== "active").length} sessions
+                      </span>
+                      <hr style={{ flex: 1, border: "none", borderTop: "1px solid rgba(255,255,255,0.07)", margin: 0 }} />
+                    </div>
+                  )}
+
+                  {/* ── Past sessions ── */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {sessions.filter(s => s.id !== activeSession?.id).map((s) => {
                     const isSelected = selected.has(s.id);
                     const isEditing = editingId === s.id;
                     const linkedWs = workSessions.find((w) => w.id === s.work_session_id);
@@ -672,19 +816,6 @@ export default function Dashboard() {
                                 style={{ fontSize: 13, color: "#3fb950", flexShrink: 0 }}
                               >
                                 check_circle
-                              </span>
-                            )}
-                            {s.id === activeSession?.id && (
-                              <span
-                                style={{
-                                  fontSize: 9, padding: "1px 5px", borderRadius: 8,
-                                  background: "rgba(63,185,80,0.15)", color: "#3fb950",
-                                  border: "1px solid rgba(63,185,80,0.3)",
-                                  fontWeight: 700, letterSpacing: "0.06em",
-                                  textTransform: "uppercase", flexShrink: 0,
-                                }}
-                              >
-                                LIVE
                               </span>
                             )}
                             {linkedWs && (
@@ -780,9 +911,27 @@ export default function Dashboard() {
                             edit
                           </span>
                         </button>
+                        <button
+                          onClick={() => setConfirmDeleteId(s.id)}
+                          title="Delete session"
+                          style={{
+                            background: "none", border: "none",
+                            color: "#484f58", cursor: "pointer",
+                            padding: 4, borderRadius: 4,
+                            display: "flex", alignItems: "center", flexShrink: 0,
+                            transition: "color 0.12s",
+                          }}
+                          onMouseEnter={(e) => (e.currentTarget.style.color = "#f85149")}
+                          onMouseLeave={(e) => (e.currentTarget.style.color = "#484f58")}
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: 15 }}>
+                            delete
+                          </span>
+                        </button>
                       </div>
                     );
                   })}
+                  </div>
                 </div>
               )}
             </section>
@@ -930,6 +1079,62 @@ export default function Dashboard() {
             </span>
             Raggruppa {selected.size} session{selected.size > 1 ? "i" : "e"}
           </button>
+        </div>
+      )}
+
+      {/* ── Delete Confirm Dialog ── */}
+      {confirmDeleteId !== null && (
+        <div
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.72)",
+            display: "flex", alignItems: "center", justifyContent: "center", zIndex: 300,
+          }}
+          onClick={() => setConfirmDeleteId(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: "#161b22", borderRadius: 10, padding: "28px 32px",
+              border: "1px solid rgba(248,81,73,0.3)", maxWidth: 340, width: "100%",
+              display: "flex", flexDirection: "column", gap: 20,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span className="material-symbols-outlined" style={{ color: "#f85149", fontSize: 22 }}>
+                delete
+              </span>
+              <span style={{ fontSize: 15, fontWeight: 600, color: "#f6f6fc" }}>
+                Delete session?
+              </span>
+            </div>
+            <p style={{ fontSize: 13, color: "#8b949e", margin: 0, lineHeight: 1.5 }}>
+              This session will be permanently removed and cannot be undone.
+            </p>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button
+                onClick={() => setConfirmDeleteId(null)}
+                style={{
+                  padding: "8px 18px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.1)",
+                  background: "transparent", color: "#8b949e", fontSize: 13, cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  await handleDeleteSession(confirmDeleteId);
+                  setConfirmDeleteId(null);
+                }}
+                style={{
+                  padding: "8px 18px", borderRadius: 6, border: "none",
+                  background: "#f85149", color: "#fff", fontSize: 13,
+                  fontWeight: 600, cursor: "pointer",
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

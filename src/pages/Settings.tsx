@@ -10,6 +10,7 @@ interface SettingField {
   unit?: string;
   min?: number;
   max?: number;
+  default?: string;
 }
 
 const FIELDS: SettingField[] = [
@@ -21,6 +22,7 @@ const FIELDS: SettingField[] = [
     unit: "secondi",
     min: 30,
     max: 1800,
+    default: "300",
   },
   {
     key: "auto_merge_threshold",
@@ -30,6 +32,17 @@ const FIELDS: SettingField[] = [
     unit: "secondi",
     min: 0,
     max: 600,
+    default: "120",
+  },
+  {
+    key: "focus_grace_period",
+    label: "Grace period focus",
+    description: "If you switch away from an app and return within N seconds, the active session is kept — no new session is created. Set to 0 to disable.",
+    type: "number",
+    unit: "seconds",
+    min: 0,
+    max: 600,
+    default: "120",
   },
   {
     key: "theme",
@@ -49,7 +62,7 @@ export default function Settings() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all(FIELDS.map((f) => getSetting(f.key).then((v) => [f.key, v] as [string, string]).catch(() => [f.key, ""] as [string, string])))
+    Promise.all(FIELDS.map((f) => getSetting(f.key).then((v) => [f.key, v || f.default || ""] as [string, string]).catch(() => [f.key, f.default ?? ""] as [string, string])))
       .then((entries) => {
         setValues(Object.fromEntries(entries));
         setLoading(false);

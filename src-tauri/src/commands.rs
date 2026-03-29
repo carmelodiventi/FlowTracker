@@ -732,3 +732,20 @@ pub fn assign_work_session_project(
     .map_err(|e| e.to_string())?;
     Ok(())
 }
+
+/// Delete a session by ID. Active sessions cannot be deleted.
+#[tauri::command]
+pub fn delete_session(state: State<DbState>, id: i64) -> Result<(), String> {
+    let conn = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    let affected = conn
+        .execute(
+            "DELETE FROM sessions WHERE id = ?1 AND status != 'active'",
+            rusqlite::params![id],
+        )
+        .map_err(|e| e.to_string())?;
+    if affected == 0 {
+        Err("Session not found or is currently active".to_string())
+    } else {
+        Ok(())
+    }
+}
