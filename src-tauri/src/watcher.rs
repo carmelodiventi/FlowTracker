@@ -25,14 +25,14 @@ pub struct SessionClosedPayload {
     pub duration_secs: i64,
 }
 
-pub fn start_watcher(db: Database, app: AppHandle) {
+pub fn start_watcher(db: Database, user_id: String, app: AppHandle) {
     thread::Builder::new()
         .name("flow-watcher".into())
-        .spawn(move || run(db, app))
+        .spawn(move || run(db, user_id, app))
         .expect("Failed to spawn flow-watcher thread");
 }
 
-fn run(db: Database, app: AppHandle) {
+fn run(db: Database, user_id: String, app: AppHandle) {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -44,7 +44,7 @@ fn run(db: Database, app: AppHandle) {
     rt.block_on(async {
         let col = db.collection::<mongodb::bson::Document>("sessions");
         let now = iso_now();
-        let mut cursor = match col.find(doc! { "status": "active" }).await {
+        let mut cursor = match col.find(doc! { "status": "active", "user_id": &user_id }).await {
             Ok(c) => c,
             Err(e) => { eprintln!("[Flow Tracker] stale-session query failed: {e}"); return; }
         };
@@ -80,7 +80,7 @@ fn run(db: Database, app: AppHandle) {
         match get_active_window() {
             Ok(win) => {
                 let process = win.app_name.clone();
-                let is_whitelisted = rt.block_on(is_app_whitelisted(&db, &process));
+                let is_whitelisted = rt.block_on(is_app_whitelisted(&db, &user_id, &process));
 
                 if is_idle {
                     pending_switch = None;
@@ -109,7 +109,7 @@ fn run(db: Database, app: AppHandle) {
                         // No session running at all — open one immediately.
                         pending_switch = None;
                         if is_whitelisted {
-                            if let Ok(sid) = rt.block_on(open_session(&db, &process)) {
+                            if let Ok(sid) = rt.block_on(open_session(&db, &user_id, &process)) {
                                 let _ = app.emit("flow:session-opened", sid.clone());
                                 current_session_id = Some(sid);
                             }
@@ -131,7 +131,7 @@ fn run(db: Database, app: AppHandle) {
                             None => {
                                 if effective_grace == 0 {
                                     pending_switch = None;
-                                    commit_switch(&rt, &db, &app, &mut current_session_id,
+                                    commit_switch(&rt, &db, &user_id, &app, &mut current_session_id,
                                                   &mut current_process, &process, is_whitelisted);
                                 } else {
                                     pending_switch = Some((process.clone(), Instant::now()));
@@ -141,7 +141,7 @@ fn run(db: Database, app: AppHandle) {
                                 if pending_proc == &process {
                                     if switched_at.elapsed().as_secs() >= effective_grace {
                                         pending_switch = None;
-                                        commit_switch(&rt, &db, &app, &mut current_session_id,
+                                        commit_switch(&rt, &db, &user_id, &app, &mut current_session_id,
                                                       &mut current_process, &process, is_whitelisted);
                                     }
                                     // else: still in grace — keep waiting.
@@ -195,6 +195,7 @@ fn run(db: Database, app: AppHandle) {
 fn commit_switch(
     rt: &tokio::runtime::Runtime,
     db: &Database,
+    user_id: &str,
     app: &AppHandle,
     current_session_id: &mut Option<String>,
     current_process: &mut Option<String>,
@@ -217,7 +218,7 @@ fn commit_switch(
         }
     }
     if is_whitelisted {
-        if let Ok(sid) = rt.block_on(open_session(db, new_process)) {
+        if let Ok(sid) = rt.block_on(open_session(db, user_id, new_process)) {
             let _ = app.emit("flow:session-opened", sid.clone());
             *current_session_id = Some(sid);
         }
@@ -227,22 +228,22 @@ fn commit_switch(
 
 // ── MongoDB helpers ────────────────────────────────────────────────────────────
 
-async fn is_app_whitelisted(db: &Database, process_name: &str) -> bool {
+async fn is_app_whitelisted(db: &Database, user_id: &str, process_name: &str) -> bool {
     let col = db.collection::<mongodb::bson::Document>("applications");
-    col.find_one(doc! { "process_name": process_name, "is_enabled": true })
+    col.find_one(doc! { "process_name": process_name, "user_id": user_id, "is_enabled": true })
         .await
         .unwrap_or(None)
         .is_some()
 }
 
-async fn open_session(db: &Database, process_name: &str) -> Result<String, String> {
-    // Auto-discover: insert the app as disabled if never seen before.
+async fn open_session(db: &Database, user_id: &str, process_name: &str) -> Result<String, String> {
     let apps = db.collection::<mongodb::bson::Document>("applications");
     apps.update_one(
-        doc! { "process_name": process_name },
+        doc! { "process_name": process_name, "user_id": user_id },
         doc! { "$setOnInsert": {
             "name": process_name,
             "process_name": process_name,
+            "user_id": user_id,
             "is_enabled": false
         }},
     )
@@ -253,6 +254,7 @@ async fn open_session(db: &Database, process_name: &str) -> Result<String, Strin
     let sessions = db.collection::<mongodb::bson::Document>("sessions");
     let result = sessions
         .insert_one(doc! {
+            "user_id":        user_id,
             "app_name":       process_name,
             "start_time":     iso_now(),
             "end_time":       Bson::Null,

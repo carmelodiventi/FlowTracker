@@ -69,6 +69,14 @@ export interface ProjectDetail {
 }
 
 // ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
+/** Returns the persistent user ID from ~/.flowtracker/user_id (generated on first launch). */
+export const getUserId = (): Promise<string> =>
+  invoke("get_user_id");
+
+// ---------------------------------------------------------------------------
 // Application / Whitelist
 // ---------------------------------------------------------------------------
 

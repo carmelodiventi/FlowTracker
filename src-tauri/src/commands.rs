@@ -1,11 +1,9 @@
-//! Tauri IPC commands — MongoDB-only backend.
+//! Tauri IPC commands — MongoDB-only, device-ID-scoped.
 
 use crate::MongoState;
 use mongodb::bson::{doc, oid::ObjectId, Bson, Document};
 use serde::{Deserialize, Serialize};
 use tauri::State;
-
-// ── Shared state ──────────────────────────────────────────────────────────────
 
 fn iso_now() -> String { chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string() }
 
@@ -86,19 +84,18 @@ fn doc_to_session(d: &Document) -> Option<Session> {
     let start_time = d.get_str("start_time").ok()?.to_string();
     let end_time = d.get_str("end_time").ok().map(|s| s.to_string());
     let duration = d.get_i64("duration")
-        .or_else(|_| d.get_i32("duration").map(|x| x as i64))
-        .ok();
+        .or_else(|_| d.get_i32("duration").map(|x| x as i64)).ok();
     let task_name = d.get_str("task_name").ok().map(|s| s.to_string());
     let status = d.get_str("status").unwrap_or("pending").to_string();
     let work_session_id = d.get_object_id("work_session_id").ok().map(|o| o.to_hex());
     Some(Session { id, app_name, start_time, end_time, duration, task_name, status, work_session_id })
 }
 
-async fn fetch_work_session_by_id(db: &mongodb::Database, ws_oid: ObjectId)
+async fn fetch_work_session_by_id(db: &mongodb::Database, user_id: &str, ws_oid: ObjectId)
     -> Result<WorkSession, String>
 {
     let ws_col = db.collection::<Document>("work_sessions");
-    let ws_doc = ws_col.find_one(doc! { "_id": ws_oid })
+    let ws_doc = ws_col.find_one(doc! { "_id": ws_oid, "user_id": user_id })
         .await.map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Work session not found: {}", ws_oid.to_hex()))?;
 
@@ -108,9 +105,8 @@ async fn fetch_work_session_by_id(db: &mongodb::Database, ws_oid: ObjectId)
     let project_id_oid = ws_doc.get_object_id("project_id").ok();
     let project_id_hex: Option<String> = project_id_oid.map(|o| o.to_hex());
 
-    // Gather stats from linked sessions.
     let sess_col = db.collection::<Document>("sessions");
-    let mut cursor = sess_col.find(doc! { "work_session_id": ws_oid })
+    let mut cursor = sess_col.find(doc! { "work_session_id": ws_oid, "user_id": user_id })
         .await.map_err(|e| e.to_string())?;
     let mut total_secs = 0i64;
     let mut session_count = 0i64;
@@ -135,10 +131,9 @@ async fn fetch_work_session_by_id(db: &mongodb::Database, ws_oid: ObjectId)
         }
     }
 
-    // Fetch project name/color if set.
     let (project_name, project_color) = if let Some(proj_oid) = project_id_oid {
         let proj_col = db.collection::<Document>("projects");
-        if let Ok(Some(pd)) = proj_col.find_one(doc! { "_id": proj_oid }).await {
+        if let Ok(Some(pd)) = proj_col.find_one(doc! { "_id": proj_oid, "user_id": user_id }).await {
             (pd.get_str("name").ok().map(|s| s.to_string()),
              pd.get_str("color").ok().map(|s| s.to_string()))
         } else { (None, None) }
@@ -159,13 +154,21 @@ async fn fetch_work_session_by_id(db: &mongodb::Database, ws_oid: ObjectId)
     })
 }
 
+// ── Device ────────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn get_user_id(state: State<'_, MongoState>) -> Result<String, String> {
+    Ok(state.user_id.clone())
+}
+
 // ── Applications ──────────────────────────────────────────────────────────────
 
 #[tauri::command]
 pub async fn list_applications(state: State<'_, MongoState>) -> Result<Vec<Application>, String> {
-    let db = &state.0;
+    let db = &state.db;
+    let did = &state.user_id;
     let col = db.collection::<Document>("applications");
-    let mut cursor = col.find(doc! {}).sort(doc! { "name": 1_i32 })
+    let mut cursor = col.find(doc! { "user_id": did }).sort(doc! { "name": 1_i32 })
         .await.map_err(|e| e.to_string())?;
     let mut apps = vec![];
     while cursor.advance().await.map_err(|e| e.to_string())? {
@@ -188,16 +191,17 @@ pub async fn upsert_application(
     state: State<'_, MongoState>,
     name: String, process_name: String, is_enabled: bool,
 ) -> Result<String, String> {
-    let col = state.0.collection::<Document>("applications");
+    let col = state.db.collection::<Document>("applications");
+    let did = &state.user_id;
     let result = col.update_one(
-        doc! { "process_name": &process_name },
+        doc! { "process_name": &process_name, "user_id": did },
         doc! { "$set": { "name": &name, "is_enabled": is_enabled },
-               "$setOnInsert": { "process_name": &process_name } },
+               "$setOnInsert": { "process_name": &process_name, "user_id": did } },
     ).upsert(true).await.map_err(|e| e.to_string())?;
     if let Some(uid) = result.upserted_id {
         return Ok(uid.as_object_id().map(|o| o.to_hex()).unwrap_or_default());
     }
-    let doc = col.find_one(doc! { "process_name": &process_name })
+    let doc = col.find_one(doc! { "process_name": &process_name, "user_id": did })
         .await.map_err(|e| e.to_string())?
         .ok_or("Not found after upsert")?;
     Ok(doc.get_object_id("_id").map_err(|e| e.to_string())?.to_hex())
@@ -208,8 +212,9 @@ pub async fn toggle_application(
     state: State<'_, MongoState>, id: String, enabled: bool,
 ) -> Result<(), String> {
     let oid = ObjectId::parse_str(&id).map_err(|e| e.to_string())?;
-    state.0.collection::<Document>("applications")
-        .update_one(doc! { "_id": oid }, doc! { "$set": { "is_enabled": enabled } })
+    state.db.collection::<Document>("applications")
+        .update_one(doc! { "_id": oid, "user_id": &state.user_id },
+                    doc! { "$set": { "is_enabled": enabled } })
         .await.map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -217,25 +222,27 @@ pub async fn toggle_application(
 #[tauri::command]
 pub async fn scan_running_apps(state: State<'_, MongoState>) -> Result<Vec<Application>, String> {
     let names = collect_running_app_names()?;
-    let col = state.0.collection::<Document>("applications");
+    let col = state.db.collection::<Document>("applications");
+    let did = &state.user_id;
 
     if !names.is_empty() {
         let names_bson: Vec<Bson> = names.iter().map(|n| Bson::String(n.clone())).collect();
         col.delete_many(doc! {
+            "user_id": did,
             "is_enabled": false,
             "process_name": { "$nin": names_bson }
         }).await.map_err(|e| e.to_string())?;
 
         for name in &names {
             col.update_one(
-                doc! { "process_name": name },
+                doc! { "process_name": name, "user_id": did },
                 doc! { "$set": { "name": name },
-                       "$setOnInsert": { "process_name": name, "is_enabled": false } },
+                       "$setOnInsert": { "process_name": name, "user_id": did, "is_enabled": false } },
             ).upsert(true).await.map_err(|e| e.to_string())?;
         }
     }
 
-    let mut cursor = col.find(doc! {}).sort(doc! { "name": 1_i32 })
+    let mut cursor = col.find(doc! { "user_id": did }).sort(doc! { "name": 1_i32 })
         .await.map_err(|e| e.to_string())?;
     let mut apps = vec![];
     while cursor.advance().await.map_err(|e| e.to_string())? {
@@ -304,9 +311,9 @@ pub async fn list_sessions_for_date(
 ) -> Result<Vec<Session>, String> {
     let start = format!("{}T00:00:00Z", date);
     let end   = format!("{}T23:59:59Z", date);
-    let col = state.0.collection::<Document>("sessions");
+    let col = state.db.collection::<Document>("sessions");
     let mut cursor = col
-        .find(doc! { "start_time": { "$gte": &start, "$lte": &end } })
+        .find(doc! { "user_id": &state.user_id, "start_time": { "$gte": &start, "$lte": &end } })
         .sort(doc! { "start_time": -1_i32 })
         .await.map_err(|e| e.to_string())?;
     let mut sessions = vec![];
@@ -319,9 +326,9 @@ pub async fn list_sessions_for_date(
 
 #[tauri::command]
 pub async fn list_pending_sessions(state: State<'_, MongoState>) -> Result<Vec<Session>, String> {
-    let col = state.0.collection::<Document>("sessions");
+    let col = state.db.collection::<Document>("sessions");
     let mut cursor = col
-        .find(doc! { "status": "pending", "end_time": { "$ne": Bson::Null } })
+        .find(doc! { "user_id": &state.user_id, "status": "pending", "end_time": { "$ne": Bson::Null } })
         .sort(doc! { "start_time": -1_i32 })
         .limit(20_i64)
         .await.map_err(|e| e.to_string())?;
@@ -338,8 +345,8 @@ pub async fn name_session(
     state: State<'_, MongoState>, id: String, task_name: String,
 ) -> Result<(), String> {
     let oid = ObjectId::parse_str(&id).map_err(|e| e.to_string())?;
-    state.0.collection::<Document>("sessions")
-        .update_one(doc! { "_id": oid },
+    state.db.collection::<Document>("sessions")
+        .update_one(doc! { "_id": oid, "user_id": &state.user_id },
                     doc! { "$set": { "task_name": &task_name, "status": "confirmed" } })
         .await.map_err(|e| e.to_string())?;
     Ok(())
@@ -348,8 +355,8 @@ pub async fn name_session(
 #[tauri::command]
 pub async fn delete_session(state: State<'_, MongoState>, id: String) -> Result<(), String> {
     let oid = ObjectId::parse_str(&id).map_err(|e| e.to_string())?;
-    let result = state.0.collection::<Document>("sessions")
-        .delete_one(doc! { "_id": oid, "status": { "$ne": "active" } })
+    let result = state.db.collection::<Document>("sessions")
+        .delete_one(doc! { "_id": oid, "user_id": &state.user_id, "status": { "$ne": "active" } })
         .await.map_err(|e| e.to_string())?;
     if result.deleted_count == 0 {
         Err("Session not found or is currently active".to_string())
@@ -366,8 +373,9 @@ pub async fn daily_summary(
     let end   = format!("{}T23:59:59Z", date);
     let pipeline = vec![
         doc! { "$match": {
+            "user_id":  &state.user_id,
             "start_time": { "$gte": &start, "$lte": &end },
-            "end_time": { "$ne": Bson::Null }
+            "end_time":   { "$ne": Bson::Null }
         }},
         doc! { "$group": {
             "_id": "$app_name",
@@ -376,7 +384,7 @@ pub async fn daily_summary(
         }},
         doc! { "$sort": { "total_secs": -1_i32 } },
     ];
-    let col = state.0.collection::<Document>("sessions");
+    let col = state.db.collection::<Document>("sessions");
     let mut cursor = col.aggregate(pipeline).await.map_err(|e| e.to_string())?;
     let mut summaries = vec![];
     while cursor.advance().await.map_err(|e| e.to_string())? {
@@ -384,12 +392,7 @@ pub async fn daily_summary(
         let app_name = d.get_str("_id").unwrap_or("").to_string();
         let total_secs = d.get_i64("total_secs").or_else(|_| d.get_i32("total_secs").map(|x| x as i64)).unwrap_or(0);
         let session_count = d.get_i64("session_count").or_else(|_| d.get_i32("session_count").map(|x| x as i64)).unwrap_or(0);
-        summaries.push(AppSummary {
-            process_name: app_name.clone(),
-            app_name,
-            total_secs,
-            session_count,
-        });
+        summaries.push(AppSummary { process_name: app_name.clone(), app_name, total_secs, session_count });
     }
     Ok(summaries)
 }
@@ -400,9 +403,9 @@ pub async fn get_sessions_for_export(
 ) -> Result<Vec<Session>, String> {
     let start = format!("{}T00:00:00Z", from_date);
     let end   = format!("{}T23:59:59Z", to_date);
-    let col = state.0.collection::<Document>("sessions");
+    let col = state.db.collection::<Document>("sessions");
     let mut cursor = col
-        .find(doc! { "start_time": { "$gte": &start, "$lte": &end }, "end_time": { "$ne": Bson::Null } })
+        .find(doc! { "user_id": &state.user_id, "start_time": { "$gte": &start, "$lte": &end }, "end_time": { "$ne": Bson::Null } })
         .sort(doc! { "task_name": 1_i32, "start_time": 1_i32 })
         .await.map_err(|e| e.to_string())?;
     let mut sessions = vec![];
@@ -414,11 +417,13 @@ pub async fn get_sessions_for_export(
 }
 
 // ── Settings ──────────────────────────────────────────────────────────────────
+// Settings use compound _id = "{user_id}::{key}" so upserts are O(1).
 
 #[tauri::command]
 pub async fn get_setting(state: State<'_, MongoState>, key: String) -> Result<String, String> {
-    let col = state.0.collection::<Document>("settings");
-    let doc = col.find_one(doc! { "_id": &key }).await.map_err(|e| e.to_string())?
+    let scoped_id = format!("{}::{}", state.user_id, key);
+    let col = state.db.collection::<Document>("settings");
+    let doc = col.find_one(doc! { "_id": &scoped_id }).await.map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Setting '{}' not found", key))?;
     doc.get_str("value").map(|s| s.to_string()).map_err(|e| e.to_string())
 }
@@ -427,8 +432,9 @@ pub async fn get_setting(state: State<'_, MongoState>, key: String) -> Result<St
 pub async fn set_setting(
     state: State<'_, MongoState>, key: String, value: String,
 ) -> Result<(), String> {
-    state.0.collection::<Document>("settings")
-        .update_one(doc! { "_id": &key }, doc! { "$set": { "value": &value } })
+    let scoped_id = format!("{}::{}", state.user_id, key);
+    state.db.collection::<Document>("settings")
+        .update_one(doc! { "_id": &scoped_id }, doc! { "$set": { "value": &value } })
         .upsert(true).await.map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -461,12 +467,12 @@ pub fn open_accessibility_settings() {
 #[tauri::command]
 pub async fn list_task_names(state: State<'_, MongoState>) -> Result<Vec<String>, String> {
     let pipeline = vec![
-        doc! { "$match": { "task_name": { "$ne": Bson::Null } } },
+        doc! { "$match": { "user_id": &state.user_id, "task_name": { "$ne": Bson::Null } } },
         doc! { "$group": { "_id": "$task_name", "last_use": { "$max": "$start_time" } } },
         doc! { "$sort": { "last_use": -1_i32 } },
         doc! { "$limit": 50_i32 },
     ];
-    let mut cursor = state.0.collection::<Document>("sessions")
+    let mut cursor = state.db.collection::<Document>("sessions")
         .aggregate(pipeline).await.map_err(|e| e.to_string())?;
     let mut names = vec![];
     while cursor.advance().await.map_err(|e| e.to_string())? {
@@ -480,8 +486,8 @@ pub async fn list_task_names(state: State<'_, MongoState>) -> Result<Vec<String>
 pub async fn rename_task_group(
     state: State<'_, MongoState>, old_name: String, new_name: String,
 ) -> Result<(), String> {
-    state.0.collection::<Document>("sessions")
-        .update_many(doc! { "task_name": &old_name },
+    state.db.collection::<Document>("sessions")
+        .update_many(doc! { "user_id": &state.user_id, "task_name": &old_name },
                      doc! { "$set": { "task_name": new_name.trim() } })
         .await.map_err(|e| e.to_string())?;
     Ok(())
@@ -489,14 +495,14 @@ pub async fn rename_task_group(
 
 #[tauri::command]
 pub async fn delete_task_group(state: State<'_, MongoState>, name: String) -> Result<(), String> {
-    state.0.collection::<Document>("sessions")
-        .update_many(doc! { "task_name": &name },
+    state.db.collection::<Document>("sessions")
+        .update_many(doc! { "user_id": &state.user_id, "task_name": &name },
                      doc! { "$set": { "task_name": Bson::Null } })
         .await.map_err(|e| e.to_string())?;
     Ok(())
 }
 
-// ── Work Sessions (Tasks) ─────────────────────────────────────────────────────
+// ── Work Sessions ─────────────────────────────────────────────────────────────
 
 #[tauri::command]
 pub async fn create_work_session(
@@ -510,12 +516,11 @@ pub async fn create_work_session(
     let oids: Vec<ObjectId> = session_ids.iter()
         .filter_map(|id| ObjectId::parse_str(id).ok()).collect();
     let oids_bson: Vec<Bson> = oids.iter().map(|o| Bson::ObjectId(*o)).collect();
-
-    let db = &state.0;
+    let db = &state.db;
+    let did = &state.user_id;
     let sess_col = db.collection::<Document>("sessions");
 
-    // Derive start time from the earliest linked session.
-    let mut cursor = sess_col.find(doc! { "_id": { "$in": &oids_bson } })
+    let mut cursor = sess_col.find(doc! { "_id": { "$in": &oids_bson }, "user_id": did })
         .await.map_err(|e| e.to_string())?;
     let mut min_start = String::new();
     while cursor.advance().await.map_err(|e| e.to_string())? {
@@ -528,20 +533,20 @@ pub async fn create_work_session(
 
     let ws_col = db.collection::<Document>("work_sessions");
     let result = ws_col.insert_one(doc! {
+        "user_id":  did,
         "name":       &name,
         "color":      color.unwrap_or_else(|| "#58a6ff".to_string()),
         "created_at": &created_at,
         "project_id": Bson::Null,
     }).await.map_err(|e| e.to_string())?;
-    let ws_oid = result.inserted_id.as_object_id()
-        .ok_or("Failed to get inserted ObjectId")?;
+    let ws_oid = result.inserted_id.as_object_id().ok_or("Failed to get inserted ObjectId")?;
 
     sess_col.update_many(
-        doc! { "_id": { "$in": &oids_bson } },
+        doc! { "_id": { "$in": &oids_bson }, "user_id": did },
         doc! { "$set": { "work_session_id": ws_oid } },
     ).await.map_err(|e| e.to_string())?;
 
-    fetch_work_session_by_id(db, ws_oid).await
+    fetch_work_session_by_id(db, did, ws_oid).await
 }
 
 #[tauri::command]
@@ -550,12 +555,12 @@ pub async fn list_work_sessions(
 ) -> Result<Vec<WorkSession>, String> {
     let start = format!("{}T00:00:00Z", date);
     let end   = format!("{}T23:59:59Z", date);
-    let db = &state.0;
+    let db = &state.db;
+    let did = &state.user_id;
 
-    // Find work session IDs referenced by sessions on this date.
     let sess_col = db.collection::<Document>("sessions");
     let mut cursor = sess_col
-        .find(doc! { "start_time": { "$gte": &start, "$lte": &end }, "work_session_id": { "$ne": Bson::Null } })
+        .find(doc! { "user_id": did, "start_time": { "$gte": &start, "$lte": &end }, "work_session_id": { "$ne": Bson::Null } })
         .await.map_err(|e| e.to_string())?;
     let mut ws_ids: std::collections::HashSet<ObjectId> = std::collections::HashSet::new();
     while cursor.advance().await.map_err(|e| e.to_string())? {
@@ -565,7 +570,7 @@ pub async fn list_work_sessions(
 
     let mut result = vec![];
     for ws_id in ws_ids {
-        if let Ok(ws) = fetch_work_session_by_id(db, ws_id).await { result.push(ws); }
+        if let Ok(ws) = fetch_work_session_by_id(db, did, ws_id).await { result.push(ws); }
     }
     result.sort_by(|a, b| a.start_time.cmp(&b.start_time));
     Ok(result)
@@ -576,8 +581,9 @@ pub async fn update_work_session(
     state: State<'_, MongoState>, id: String, name: String,
 ) -> Result<(), String> {
     let oid = ObjectId::parse_str(&id).map_err(|e| e.to_string())?;
-    state.0.collection::<Document>("work_sessions")
-        .update_one(doc! { "_id": oid }, doc! { "$set": { "name": name.trim() } })
+    state.db.collection::<Document>("work_sessions")
+        .update_one(doc! { "_id": oid, "user_id": &state.user_id },
+                    doc! { "$set": { "name": name.trim() } })
         .await.map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -585,12 +591,14 @@ pub async fn update_work_session(
 #[tauri::command]
 pub async fn delete_work_session(state: State<'_, MongoState>, id: String) -> Result<(), String> {
     let oid = ObjectId::parse_str(&id).map_err(|e| e.to_string())?;
-    let db = &state.0;
+    let db = &state.db;
+    let did = &state.user_id;
     db.collection::<Document>("sessions")
-        .update_many(doc! { "work_session_id": oid }, doc! { "$set": { "work_session_id": Bson::Null } })
+        .update_many(doc! { "work_session_id": oid, "user_id": did },
+                     doc! { "$set": { "work_session_id": Bson::Null } })
         .await.map_err(|e| e.to_string())?;
     db.collection::<Document>("work_sessions")
-        .delete_one(doc! { "_id": oid })
+        .delete_one(doc! { "_id": oid, "user_id": did })
         .await.map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -600,8 +608,8 @@ pub async fn list_sessions_for_work_session(
     state: State<'_, MongoState>, work_session_id: String,
 ) -> Result<Vec<Session>, String> {
     let oid = ObjectId::parse_str(&work_session_id).map_err(|e| e.to_string())?;
-    let mut cursor = state.0.collection::<Document>("sessions")
-        .find(doc! { "work_session_id": oid })
+    let mut cursor = state.db.collection::<Document>("sessions")
+        .find(doc! { "work_session_id": oid, "user_id": &state.user_id })
         .sort(doc! { "start_time": 1_i32 })
         .await.map_err(|e| e.to_string())?;
     let mut sessions = vec![];
@@ -617,8 +625,9 @@ pub async fn remove_session_from_work_session(
     state: State<'_, MongoState>, session_id: String,
 ) -> Result<(), String> {
     let oid = ObjectId::parse_str(&session_id).map_err(|e| e.to_string())?;
-    state.0.collection::<Document>("sessions")
-        .update_one(doc! { "_id": oid }, doc! { "$set": { "work_session_id": Bson::Null } })
+    state.db.collection::<Document>("sessions")
+        .update_one(doc! { "_id": oid, "user_id": &state.user_id },
+                    doc! { "$set": { "work_session_id": Bson::Null } })
         .await.map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -634,8 +643,9 @@ pub async fn assign_work_session_project(
         Some(ref pid) => Bson::ObjectId(ObjectId::parse_str(pid).map_err(|e| e.to_string())?),
         None => Bson::Null,
     };
-    state.0.collection::<Document>("work_sessions")
-        .update_one(doc! { "_id": ws_oid }, doc! { "$set": { "project_id": proj_val } })
+    state.db.collection::<Document>("work_sessions")
+        .update_one(doc! { "_id": ws_oid, "user_id": &state.user_id },
+                    doc! { "$set": { "project_id": proj_val } })
         .await.map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -649,8 +659,8 @@ const PALETTE: &[&str] = &[
 
 #[tauri::command]
 pub async fn list_projects(state: State<'_, MongoState>) -> Result<Vec<Project>, String> {
-    let mut cursor = state.0.collection::<Document>("projects")
-        .find(doc! {}).sort(doc! { "name": 1_i32 })
+    let mut cursor = state.db.collection::<Document>("projects")
+        .find(doc! { "user_id": &state.user_id }).sort(doc! { "name": 1_i32 })
         .await.map_err(|e| e.to_string())?;
     let mut projects = vec![];
     while cursor.advance().await.map_err(|e| e.to_string())? {
@@ -668,9 +678,10 @@ pub async fn list_projects(state: State<'_, MongoState>) -> Result<Vec<Project>,
 
 #[tauri::command]
 pub async fn list_projects_detail(state: State<'_, MongoState>) -> Result<Vec<ProjectDetail>, String> {
-    let db = &state.0;
+    let db = &state.db;
+    let did = &state.user_id;
     let mut cursor = db.collection::<Document>("projects")
-        .find(doc! {}).sort(doc! { "name": 1_i32 })
+        .find(doc! { "user_id": did }).sort(doc! { "name": 1_i32 })
         .await.map_err(|e| e.to_string())?;
     let mut projects = vec![];
     while cursor.advance().await.map_err(|e| e.to_string())? {
@@ -679,8 +690,8 @@ pub async fn list_projects_detail(state: State<'_, MongoState>) -> Result<Vec<Pr
             let client_id_oid = d.get_object_id("client_id").ok();
             let client_id_hex: Option<String> = client_id_oid.map(|o| o.to_hex());
             let client_name = if let Some(cid) = client_id_oid {
-                let cc = db.collection::<Document>("clients");
-                cc.find_one(doc! { "_id": cid }).await.ok().flatten()
+                db.collection::<Document>("clients")
+                    .find_one(doc! { "_id": cid, "user_id": did }).await.ok().flatten()
                     .and_then(|cd| cd.get_str("name").ok().map(|s| s.to_string()))
             } else { None };
             projects.push(ProjectDetail {
@@ -699,13 +710,12 @@ pub async fn list_projects_detail(state: State<'_, MongoState>) -> Result<Vec<Pr
 #[tauri::command]
 pub async fn create_project(
     state: State<'_, MongoState>,
-    name: String,
-    description: Option<String>,
-    client_id: Option<String>,
+    name: String, description: Option<String>, client_id: Option<String>,
 ) -> Result<ProjectDetail, String> {
-    let db = &state.0;
+    let db = &state.db;
+    let did = &state.user_id;
     let count = db.collection::<Document>("projects")
-        .count_documents(doc! {}).await.unwrap_or(0);
+        .count_documents(doc! { "user_id": did }).await.unwrap_or(0);
     let color = PALETTE[(count as usize) % PALETTE.len()].to_string();
 
     let client_id_oid: Option<ObjectId> = client_id.as_deref()
@@ -715,60 +725,55 @@ pub async fn create_project(
     let desc_val = description.as_deref().map(Bson::from).unwrap_or(Bson::Null);
 
     let result = db.collection::<Document>("projects").insert_one(doc! {
+        "user_id":   did,
         "name":        name.trim(),
         "color":       &color,
         "description": desc_val,
         "client_id":   client_val,
     }).await.map_err(|e| e.to_string())?;
-    let id = result.inserted_id.as_object_id()
-        .ok_or("No ObjectId")?.to_hex();
+    let id = result.inserted_id.as_object_id().ok_or("No ObjectId")?.to_hex();
 
     let client_name = if let Some(cid) = client_id_oid {
         db.collection::<Document>("clients")
-            .find_one(doc! { "_id": cid }).await.ok().flatten()
+            .find_one(doc! { "_id": cid, "user_id": did }).await.ok().flatten()
             .and_then(|cd| cd.get_str("name").ok().map(|s| s.to_string()))
     } else { None };
 
     Ok(ProjectDetail {
-        id,
-        name: name.trim().to_string(),
-        color,
-        description,
-        client_id: client_id_oid.map(|o| o.to_hex()),
-        client_name,
+        id, name: name.trim().to_string(), color, description,
+        client_id: client_id_oid.map(|o| o.to_hex()), client_name,
     })
 }
 
 #[tauri::command]
 pub async fn update_project(
     state: State<'_, MongoState>,
-    id: String, name: String,
-    description: Option<String>,
-    client_id: Option<String>,
+    id: String, name: String, description: Option<String>, client_id: Option<String>,
 ) -> Result<(), String> {
     let oid = ObjectId::parse_str(&id).map_err(|e| e.to_string())?;
     let client_val = client_id.as_deref()
         .map(|cid| ObjectId::parse_str(cid).map(Bson::ObjectId).map_err(|e| e.to_string()))
         .transpose()?.unwrap_or(Bson::Null);
-    state.0.collection::<Document>("projects")
-        .update_one(doc! { "_id": oid }, doc! { "$set": {
+    state.db.collection::<Document>("projects")
+        .update_one(doc! { "_id": oid, "user_id": &state.user_id }, doc! { "$set": {
             "name":        name.trim(),
             "description": description.as_deref().map(Bson::from).unwrap_or(Bson::Null),
             "client_id":   client_val,
-        }})
-        .await.map_err(|e| e.to_string())?;
+        }}).await.map_err(|e| e.to_string())?;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn delete_project(state: State<'_, MongoState>, id: String) -> Result<(), String> {
     let oid = ObjectId::parse_str(&id).map_err(|e| e.to_string())?;
-    let db = &state.0;
+    let db = &state.db;
+    let did = &state.user_id;
     db.collection::<Document>("work_sessions")
-        .update_many(doc! { "project_id": oid }, doc! { "$set": { "project_id": Bson::Null } })
+        .update_many(doc! { "project_id": oid, "user_id": did },
+                     doc! { "$set": { "project_id": Bson::Null } })
         .await.map_err(|e| e.to_string())?;
     db.collection::<Document>("projects")
-        .delete_one(doc! { "_id": oid })
+        .delete_one(doc! { "_id": oid, "user_id": did })
         .await.map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -777,8 +782,8 @@ pub async fn delete_project(state: State<'_, MongoState>, id: String) -> Result<
 
 #[tauri::command]
 pub async fn list_clients(state: State<'_, MongoState>) -> Result<Vec<Client>, String> {
-    let mut cursor = state.0.collection::<Document>("clients")
-        .find(doc! {}).sort(doc! { "name": 1_i32 })
+    let mut cursor = state.db.collection::<Document>("clients")
+        .find(doc! { "user_id": &state.user_id }).sort(doc! { "name": 1_i32 })
         .await.map_err(|e| e.to_string())?;
     let mut clients = vec![];
     while cursor.advance().await.map_err(|e| e.to_string())? {
@@ -795,8 +800,8 @@ pub async fn list_clients(state: State<'_, MongoState>) -> Result<Vec<Client>, S
 
 #[tauri::command]
 pub async fn create_client(state: State<'_, MongoState>, name: String) -> Result<Client, String> {
-    let result = state.0.collection::<Document>("clients")
-        .insert_one(doc! { "name": name.trim() })
+    let result = state.db.collection::<Document>("clients")
+        .insert_one(doc! { "user_id": &state.user_id, "name": name.trim() })
         .await.map_err(|e| e.to_string())?;
     let id = result.inserted_id.as_object_id().ok_or("No ObjectId")?.to_hex();
     Ok(Client { id, name: name.trim().to_string() })
@@ -805,8 +810,8 @@ pub async fn create_client(state: State<'_, MongoState>, name: String) -> Result
 #[tauri::command]
 pub async fn delete_client(state: State<'_, MongoState>, id: String) -> Result<(), String> {
     let oid = ObjectId::parse_str(&id).map_err(|e| e.to_string())?;
-    state.0.collection::<Document>("clients")
-        .delete_one(doc! { "_id": oid })
+    state.db.collection::<Document>("clients")
+        .delete_one(doc! { "_id": oid, "user_id": &state.user_id })
         .await.map_err(|e| e.to_string())?;
     Ok(())
 }

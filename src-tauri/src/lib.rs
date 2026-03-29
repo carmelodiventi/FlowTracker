@@ -11,8 +11,27 @@ use tauri::{
     AppHandle, Manager, Runtime,
 };
 
-/// Shared MongoDB database handle (Clone + Send + Sync — no Arc needed).
-pub struct MongoState(pub Database);
+/// Shared MongoDB database handle + scoped device identity.
+pub struct MongoState {
+    pub db:        Database,
+    pub user_id: String,
+}
+
+/// Load or generate a persistent user ID from ~/.flowtracker/user_id.
+fn load_or_create_user_id() -> String {
+    let dir = dirs_next::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".flowtracker");
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("user_id");
+    if let Ok(id) = std::fs::read_to_string(&path) {
+        let id = id.trim().to_string();
+        if !id.is_empty() { return id; }
+    }
+    let id = uuid::Uuid::new_v4().to_string();
+    let _ = std::fs::write(&path, &id);
+    id
+}
 
 fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let tracking = MenuItem::with_id(app, "tracking_status", "○ Not tracking", false, None::<&str>)?;
@@ -29,6 +48,9 @@ pub fn run() {
     let mongo_uri = std::env::var("MONGODB_URI")
         .expect("MONGODB_URI must be set in environment or .env");
 
+    let user_id = load_or_create_user_id();
+    println!("[Flow Tracker] User ID: {}", user_id);
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
@@ -42,15 +64,15 @@ pub fn run() {
                 opts.app_name = Some("FlowTracker".into());
                 let client = Client::with_options(opts)
                     .expect("Failed to create MongoDB client");
-                // Ping to verify connectivity early.
                 client.database("admin")
                     .run_command(mongodb::bson::doc! { "ping": 1 }).await
                     .expect("Cannot reach MongoDB — check MONGODB_URI and network");
                 client.database("flowtracker")
             });
 
-            // Seed default settings if missing.
+            // Seed default settings (device-scoped) if missing.
             let db_seed = db.clone();
+            let uid_seed = user_id.clone();
             tauri::async_runtime::spawn(async move {
                 let col = db_seed.collection::<mongodb::bson::Document>("settings");
                 for (key, val) in [
@@ -58,14 +80,20 @@ pub fn run() {
                     ("merge_gap_secs", "120"),
                     ("whitelist_enabled", "1"),
                 ] {
+                    let scoped_id = format!("{}::{}", uid_seed, key);
                     let _ = col.update_one(
-                        mongodb::bson::doc! { "_id": key },
-                        mongodb::bson::doc! { "$setOnInsert": { "_id": key, "value": val } },
+                        mongodb::bson::doc! { "_id": &scoped_id },
+                        mongodb::bson::doc! { "$setOnInsert": {
+                            "_id":       &scoped_id,
+                            "user_id": &uid_seed,
+                            "key":       key,
+                            "value":     val,
+                        }},
                     ).upsert(true).await;
                 }
             });
 
-            app.manage(MongoState(db.clone()));
+            app.manage(MongoState { db: db.clone(), user_id: user_id.clone() });
 
             // ── System tray ───────────────────────────────────────────────────
             let menu = build_tray_menu(&handle)?;
@@ -94,7 +122,7 @@ pub fn run() {
                 .build(&handle)?;
 
             // ── Start watcher ─────────────────────────────────────────────────
-            watcher::start_watcher(db, handle);
+            watcher::start_watcher(db, user_id, handle);
 
             Ok(())
         })
@@ -105,6 +133,8 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            // Device
+            get_user_id,
             // Applications
             list_applications,
             upsert_application,

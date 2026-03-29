@@ -26,6 +26,8 @@ env_logger     = "0.11"
 tauri-plugin-dialog = "2.0.0-rc.8"
 tauri-plugin-fs = "2.0.0-rc.6"
 mongodb = "3.2.5"
+dirs-next = "2"
+uuid = { version = "1", features = ["v4"] }
 dotenvy = "0.15"
 tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
 chrono = "0.4"
