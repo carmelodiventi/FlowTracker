@@ -1,8 +1,8 @@
 [package]
-name = "flow-tracker"
-version = "0.1.0"
+name = "FlowTracker"
+version = "0.1.1"
 description = "Flow Tracker — Privacy-first automatic time tracking"
-authors = []
+authors = ["Carmelo Di Venti <carmelodiventi@gmail.com>"]
 edition = "2021"
 rust-version = "1.77"
 
