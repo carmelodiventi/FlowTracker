@@ -74,7 +74,7 @@ fn run(db: Database, user_id: String, app: AppHandle) {
     loop {
         let idle_secs = seconds_since_last_input();
         let is_idle = idle_secs >= IDLE_THRESHOLD_SECS;
-        let grace_secs = rt.block_on(read_setting_i64(&db, "focus_grace_period"))
+        let grace_secs = rt.block_on(read_setting_i64(&db, &user_id, "focus_grace_period"))
             .unwrap_or(120).max(0) as u64;
 
         match get_active_window() {
@@ -165,7 +165,7 @@ fn run(db: Database, user_id: String, app: AppHandle) {
                     Some(e) if e >= grace_secs => {
                         pending_switch = None;
                         if let Some(sid) = current_session_id.take() {
-                            let threshold = rt.block_on(read_setting_i64(&db, "auto_merge_threshold"))
+                            let threshold = rt.block_on(read_setting_i64(&db, &user_id, "auto_merge_threshold"))
                                 .unwrap_or(120);
                             if let Some((surviving_id, app_name, dur)) =
                                 rt.block_on(close_and_merge(&db, &sid, threshold))
@@ -203,7 +203,7 @@ fn commit_switch(
     is_whitelisted: bool,
 ) {
     if let Some(sid) = current_session_id.take() {
-        let threshold = rt.block_on(read_setting_i64(db, "auto_merge_threshold")).unwrap_or(120);
+        let threshold = rt.block_on(read_setting_i64(db, user_id, "auto_merge_threshold")).unwrap_or(120);
         if let Some((surviving_id, app_name, dur)) =
             rt.block_on(close_and_merge(db, &sid, threshold))
         {
@@ -346,9 +346,10 @@ async fn close_and_merge(
     Some((session_id.to_string(), app_name, duration))
 }
 
-async fn read_setting_i64(db: &Database, key: &str) -> Option<i64> {
+async fn read_setting_i64(db: &Database, user_id: &str, key: &str) -> Option<i64> {
+    let scoped_id = format!("{}::{}", user_id, key);
     let col = db.collection::<mongodb::bson::Document>("settings");
-    let doc = col.find_one(doc! { "_id": key }).await.ok()??;
+    let doc = col.find_one(doc! { "_id": &scoped_id }).await.ok()??;
     doc.get_str("value").ok()?.parse().ok()
 }
 

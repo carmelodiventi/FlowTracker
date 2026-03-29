@@ -115,6 +115,9 @@ export const nameSession = (id: string, task_name: string): Promise<void> =>
 export const deleteSession = (id: string): Promise<void> =>
   invoke("delete_session", { id });
 
+export const stopActiveSession = (): Promise<void> =>
+  invoke("stop_active_session");
+
 export const getSessionsForExport = (fromDate: string, toDate: string): Promise<Session[]> =>
   invoke("get_sessions_for_export", { fromDate, toDate });
 

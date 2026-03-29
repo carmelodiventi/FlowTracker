@@ -3,7 +3,7 @@
 use crate::MongoState;
 use mongodb::bson::{doc, oid::ObjectId, Bson, Document};
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{State, Emitter};
 
 fn iso_now() -> String { chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string() }
 
@@ -363,6 +363,51 @@ pub async fn delete_session(state: State<'_, MongoState>, id: String) -> Result<
     } else {
         Ok(())
     }
+}
+
+#[tauri::command]
+pub async fn stop_active_session(
+    state: State<'_, MongoState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let col = state.db.collection::<Document>("sessions");
+    let now = crate::watcher::iso_now();
+    // Find the active session for this user
+    let session = col.find_one(doc! {
+        "user_id": &state.user_id,
+        "status": "active"
+    }).await.map_err(|e| e.to_string())?;
+
+    let Some(doc) = session else {
+        return Ok(()); // nothing active
+    };
+    let oid = doc.get_object_id("_id").map_err(|e| e.to_string())?;
+    let start = doc.get_str("start_time").unwrap_or("").to_string();
+    let app_name = doc.get_str("app_name").unwrap_or("").to_string();
+
+    let duration = if start.is_empty() {
+        0i64
+    } else {
+        let start_dt = chrono::DateTime::parse_from_rfc3339(&start)
+            .map(|d| d.timestamp())
+            .unwrap_or(0);
+        let now_ts = chrono::Utc::now().timestamp();
+        (now_ts - start_dt).max(0)
+    };
+
+    col.update_one(
+        doc! { "_id": oid },
+        doc! { "$set": { "status": "closed", "end_time": &now, "duration": duration } },
+    ).await.map_err(|e| e.to_string())?;
+
+    // Emit so the UI refreshes
+    let _ = app.emit("flow:session-closed", serde_json::json!({
+        "session_id": oid.to_hex(),
+        "app_name": app_name,
+        "duration_secs": duration,
+    }));
+
+    Ok(())
 }
 
 #[tauri::command]

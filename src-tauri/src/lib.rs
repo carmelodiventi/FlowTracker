@@ -146,6 +146,7 @@ pub fn run() {
             list_pending_sessions,
             name_session,
             delete_session,
+            stop_active_session,
             daily_summary,
             get_sessions_for_export,
             // Settings

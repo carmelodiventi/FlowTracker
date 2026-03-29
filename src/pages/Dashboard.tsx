@@ -4,6 +4,7 @@ import {
   dailySummary,
   listSessionsForDate,
   deleteSession,
+  stopActiveSession,
   listWorkSessions,
   createWorkSession,
   updateWorkSession,
@@ -917,6 +918,34 @@ export default function Dashboard() {
                             >
                               {fmtDuration(liveSecs)}
                             </span>
+                            <button
+                              onClick={async () => {
+                                await stopActiveSession().catch(console.error);
+                                await load();
+                              }}
+                              title="Stop tracking"
+                              style={{
+                                background: "rgba(248,81,73,0.1)",
+                                border: "1px solid rgba(248,81,73,0.3)",
+                                borderRadius: 6,
+                                padding: "4px 10px",
+                                color: "#f85149",
+                                cursor: "pointer",
+                                fontSize: 11,
+                                fontWeight: 700,
+                                letterSpacing: "0.04em",
+                                flexShrink: 0,
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 4,
+                                transition: "background 0.12s",
+                              }}
+                              onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(248,81,73,0.2)")}
+                              onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(248,81,73,0.1)")}
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: 13 }}>stop_circle</span>
+                              Stop
+                            </button>
                             {linkedWs && (
                               <span
                                 style={{
