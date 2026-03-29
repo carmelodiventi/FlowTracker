@@ -129,7 +129,7 @@ export default function Layout() {
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#c0c7d4" }}>
               <span className="material-symbols-outlined" style={{ fontSize: 16 }}>desktop_windows</span>
-              <span style={{ fontSize: 12 }}>FlowTracker Helper</span>
+              <span style={{ fontSize: 12 }}>Flow Tracker Helper</span>
             </div>
           </div>
         </div>

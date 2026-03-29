@@ -456,7 +456,7 @@ pub fn set_setting(
 // Accessibility permission
 // ---------------------------------------------------------------------------
 
-/// Returns `true` if FlowTracker has been granted Accessibility permission.
+/// Returns `true` if Flow Tracker has been granted Accessibility permission.
 /// Uses the macOS `AXIsProcessTrusted()` API (ApplicationServices framework).
 /// On non-macOS platforms always returns `true`.
 #[tauri::command]

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# FlowTracker — Project Bootstrap Script
+# Flow Tracker — Project Bootstrap Script
 # Run once from the repository root:  bash bootstrap.sh
 # =============================================================================
 set -euo pipefail
@@ -101,7 +101,7 @@ import "./App.css";
 function App() {
   return (
     <div className="container">
-      <h1>⏱ FlowTracker</h1>
+      <h1>⏱ Flow Tracker</h1>
       <p className="subtitle">Privacy-first automatic time tracking</p>
       <span className="status-badge">
         <span className="dot" />
@@ -144,9 +144,9 @@ RUST_EOF
 
 cat > src-tauri/Cargo.toml << 'TOML_EOF'
 [package]
-name = "flow-tracker"
+name = "Flow Tracker"
 version = "0.1.0"
-description = "FlowTracker — Privacy-first automatic time tracking"
+description = "Flow Tracker — Privacy-first automatic time tracking"
 authors = []
 edition = "2021"
 rust-version = "1.77"
@@ -180,7 +180,7 @@ TOML_EOF
 cat > src-tauri/tauri.conf.json << 'JSON_EOF'
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "FlowTracker",
+  "productName": "Flow Tracker",
   "version": "0.1.0",
   "identifier": "com.flowtracker.app",
   "build": {
@@ -192,7 +192,7 @@ cat > src-tauri/tauri.conf.json << 'JSON_EOF'
   "app": {
     "windows": [
       {
-        "title": "FlowTracker",
+        "title": "Flow Tracker",
         "width": 1200,
         "height": 800,
         "resizable": true,
@@ -221,7 +221,7 @@ cat > src-tauri/capabilities/default.json << 'JSON_EOF'
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capabilities granted to the main FlowTracker window.",
+  "description": "Default capabilities granted to the main Flow Tracker window.",
   "windows": ["main"],
   "permissions": [
     "core:default"
@@ -242,7 +242,7 @@ fn main() {
 RUST_EOF
 
 cat > src-tauri/src/lib.rs << 'RUST_EOF'
-//! FlowTracker — Tauri application entry point.
+//! Flow Tracker — Tauri application entry point.
 //!
 //! Responsibilities of this crate root:
 //!   1. Start the background active-window watcher thread.
@@ -254,7 +254,7 @@ mod watcher;
 /// Called by `main.rs` (and by the mobile entry-point shim when targeting iOS/Android).
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Initialise env_logger so [FlowTracker] messages appear in the terminal.
+    // Initialise env_logger so [Flow Tracker] messages appear in the terminal.
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     // Kick off the background watcher before the Tauri event loop blocks.
@@ -304,7 +304,7 @@ pub fn start_watcher() {
 /// Main body of the watcher thread — never returns under normal operation.
 fn poll_loop() {
     println!(
-        "[FlowTracker] Watcher started — sampling active window every {}s",
+        "[Flow Tracker] Watcher started — sampling active window every {}s",
         POLL_INTERVAL.as_secs()
     );
 
@@ -321,14 +321,14 @@ fn report_active_window() {
             // Trim excessively long titles to keep output readable.
             let title = truncate(&win.title, 80);
             println!(
-                "[FlowTracker] app={:?}  title={:?}  pid={}",
+                "[Flow Tracker] app={:?}  title={:?}  pid={}",
                 win.app_name, title, win.process_id
             );
         }
         Err(_) => {
             // `get_active_window` returns `Err(())` when the desktop / screen
             // saver is in focus — not an error worth logging at WARNING level.
-            println!("[FlowTracker] <no active window>");
+            println!("[Flow Tracker] <no active window>");
         }
     }
 }
@@ -396,6 +396,6 @@ echo ""
 echo "🎉  Bootstrap complete!"
 echo ""
 echo "Next steps:"
-echo "  cd $(dirname "$ROOT_DIR")/FlowTracker"
+echo "  cd $(dirname "$ROOT_DIR")/Flow Tracker"
 echo "  npm install          # install JS dependencies"
 echo "  npm run tauri dev    # start dev mode (Vite + Tauri)"

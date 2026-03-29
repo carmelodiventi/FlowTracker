@@ -117,7 +117,7 @@ export default function Whitelist() {
             }}
           >
             Scegli quali applicazioni devono essere tracciate automaticamente
-            dal sistema FlowTracker per migliorare l'accuratezza del tuo
+            dal sistema Flow Tracker per migliorare l'accuratezza del tuo
             workflow.
           </p>
         </div>

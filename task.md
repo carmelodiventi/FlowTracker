@@ -1,4 +1,4 @@
-Task: Sviluppo "FlowTracker" - Desktop App per Automatic Time Tracking
+Task: Sviluppo "Flow Tracker" - Desktop App per Automatic Time Tracking
 🎯 Obiettivo del Progetto
 Realizzare un'applicazione desktop "Zero-Effort" che monitori automaticamente il tempo speso su applicazioni specifiche (whitelist) per eliminare la necessità di cliccare "Start/Stop" manualmente sui timer di lavoro.
 

@@ -1,4 +1,4 @@
-//! FlowTracker — Tauri application entry point (MVP 3).
+//! Flow Tracker — Tauri application entry point (MVP 3).
 //!
 //! Responsibilities:
 //!   1. Open the local SQLite database (two connections: one for the watcher
@@ -42,7 +42,7 @@ pub fn run() {
                 "main",
                 tauri::WebviewUrl::App("index.html".into()),
             )
-            .title("FlowTracker")
+            .title("Flow Tracker")
             .inner_size(1200.0, 800.0)
             .resizable(true)
             .build()?;

@@ -357,7 +357,7 @@ export default function Dashboard() {
           borderBottom: "1px solid rgba(255,255,255,0.06)",
           background: "#010409",
           flexShrink: 0,
-          position: "sticky",
+          position: "relative",
           top: 0,
           zIndex: 20,
         }}
@@ -998,17 +998,17 @@ export default function Dashboard() {
                                   <span className="material-symbols-outlined" style={{ fontSize: 16, color: appColor(s.app_name) }}>{appIcon(s.app_name)}</span>
                                 </div>
                                 <div style={{ flex: 1, minWidth: 0 }}>
-                                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: isEditing || s.task_name ? 3 : 0 }}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                                     <span style={{ fontSize: 13, fontWeight: 600, color: "#e6edf3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.app_name}</span>
                                     {s.status === "confirmed" && <span className="material-symbols-outlined" style={{ fontSize: 13, color: "#3fb950", flexShrink: 0 }}>check_circle</span>}
                                     {linkedWs && <span style={{ fontSize: 10, padding: "1px 7px", borderRadius: 10, background: `${linkedWs.color}22`, color: linkedWs.color, border: `1px solid ${linkedWs.color}44`, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }}>{linkedWs.name}</span>}
                                   </div>
                                   {isEditing ? (
-                                    <div style={{ display: "flex", gap: 6, marginTop: 2 }}>
+                                    <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
                                       <div style={{ position: "relative", flex: 1 }}>
                                         <input autoFocus value={editName} onChange={(e) => setEditName(e.target.value)}
                                           onKeyDown={(e) => { if (e.key === "Enter") handleRename(s.id); if (e.key === "Escape") { setEditingId(null); setEditName(""); } }}
-                                          placeholder="Task name…" style={inlineInput} />
+                                          placeholder="What task are you working on?" style={inlineInput} />
                                         {suggestions.length > 0 && (
                                           <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, background: "#1c2128", border: "1px solid rgba(88,166,255,0.3)", borderRadius: 6, zIndex: 100, overflow: "hidden" }}>
                                             {suggestions.map((name) => (
@@ -1022,24 +1022,33 @@ export default function Dashboard() {
                                           </div>
                                         )}
                                       </div>
-                                      <button onClick={() => handleRename(s.id)} style={pillBtn("#3fb950", "#0d1117")}>Salva</button>
+                                      <button onClick={() => handleRename(s.id)} style={pillBtn("#3fb950", "#0d1117")}>Save</button>
                                       <button onClick={() => { setEditingId(null); setEditName(""); }} style={pillBtn("rgba(255,255,255,0.08)", "#8b949e")}>✕</button>
                                     </div>
                                   ) : (
-                                    s.task_name && (
-                                      <span style={{ fontSize: 11, color: "#8b949e", fontStyle: "italic" }}>{s.task_name}</span>
-                                    )
+                                    <button
+                                      onClick={() => { setEditingId(s.id); setEditName(""); }}
+                                      style={{
+                                        marginTop: 4,
+                                        display: "inline-flex", alignItems: "center", gap: 4,
+                                        padding: "2px 9px", borderRadius: 10,
+                                        border: "1px dashed rgba(88,166,255,0.3)",
+                                        background: "transparent", color: "#484f58",
+                                        fontSize: 11, cursor: "pointer",
+                                        transition: "border-color 0.12s, color 0.12s",
+                                      }}
+                                      onMouseEnter={(e) => { e.currentTarget.style.borderColor = "rgba(88,166,255,0.7)"; e.currentTarget.style.color = "#58a6ff"; }}
+                                      onMouseLeave={(e) => { e.currentTarget.style.borderColor = "rgba(88,166,255,0.3)"; e.currentTarget.style.color = "#484f58"; }}
+                                    >
+                                      <span className="material-symbols-outlined" style={{ fontSize: 12 }}>add</span>
+                                      Add to a task
+                                    </button>
                                   )}
                                 </div>
                                 <div style={{ textAlign: "right", flexShrink: 0 }}>
                                   <div style={{ fontSize: 11, fontFamily: "Roboto Mono, monospace", color: "#8b949e", marginBottom: 2 }}>{fmtTime(s.start_time)}{s.end_time ? ` – ${fmtTime(s.end_time)}` : " →"}</div>
                                   <div style={{ fontSize: 12, fontFamily: "Roboto Mono, monospace", color: "#58a6ff", fontWeight: 700 }}>{s.duration ? fmtDuration(s.duration) : "…"}</div>
                                 </div>
-                                <button onClick={() => { setEditingId(s.id); setEditName(s.task_name ?? ""); }} title="Edit task name"
-                                  style={{ background: "none", border: "none", color: "#484f58", cursor: "pointer", padding: 4, borderRadius: 4, display: "flex", alignItems: "center", flexShrink: 0, transition: "color 0.12s" }}
-                                  onMouseEnter={(e) => (e.currentTarget.style.color = "#8b949e")} onMouseLeave={(e) => (e.currentTarget.style.color = "#484f58")}>
-                                  <span className="material-symbols-outlined" style={{ fontSize: 15 }}>edit</span>
-                                </button>
                                 <button onClick={() => setConfirmDeleteId(s.id)} title="Delete session"
                                   style={{ background: "none", border: "none", color: "#484f58", cursor: "pointer", padding: 4, borderRadius: 4, display: "flex", alignItems: "center", flexShrink: 0, transition: "color 0.12s" }}
                                   onMouseEnter={(e) => (e.currentTarget.style.color = "#f85149")} onMouseLeave={(e) => (e.currentTarget.style.color = "#484f58")}>

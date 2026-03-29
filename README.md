@@ -1,4 +1,4 @@
-# ⏱ FlowTracker
+# ⏱ Flow Tracker
 
 > Privacy-first, zero-effort desktop time-tracking built with **Tauri 2** (Rust + React/TypeScript) and a **local SQLite** database.
 
@@ -7,7 +7,7 @@
 ## Architecture
 
 ```
-FlowTracker/
+Flow Tracker/
 ├── src/                    # React + TypeScript frontend (Vite)
 │   ├── main.tsx
 │   ├── App.tsx
@@ -93,7 +93,7 @@ CREATE TABLE Settings (
 `active-win-pos-rs` reads window titles via **CGWindowList / NSWorkspace**.  
 On first launch you'll see a macOS permission dialog — click **Allow** in:
 
-> System Settings → Privacy & Security → Accessibility → FlowTracker ✅
+> System Settings → Privacy & Security → Accessibility → Flow Tracker ✅
 
 Without this, app names are returned but window titles may be blank.
 

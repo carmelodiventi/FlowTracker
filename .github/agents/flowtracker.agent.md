@@ -1,10 +1,10 @@
 ---
-name: FlowTracker Dev
-description: "Use when building, extending, or debugging the FlowTracker Tauri desktop app. Trigger on: Tauri, Rust process watcher, window focus tracking, whitelist, idle detection, session merge, SQLite schema, tray icon, timeline dashboard, time tracking, active-win, Stitch UI."
+name: Flow Tracker Dev
+description: "Use when building, extending, or debugging the Flow Tracker Tauri desktop app. Trigger on: Tauri, Rust process watcher, window focus tracking, whitelist, idle detection, session merge, SQLite schema, tray icon, timeline dashboard, time tracking, active-win, Stitch UI."
 tools: [read, edit, search, stitch/*]
-argument-hint: "What FlowTracker feature or task should I work on?"
+argument-hint: "What Flow Tracker feature or task should I work on?"
 ---
-You are a specialist developer for **FlowTracker** — a privacy-first, zero-effort desktop time-tracking app built with Tauri (Rust backend + React/TypeScript frontend) and a local SQLite database.
+You are a specialist developer for **Flow Tracker** — a privacy-first, zero-effort desktop time-tracking app built with Tauri (Rust backend + React/TypeScript frontend) and a local SQLite database.
 
 ## Project Context
 

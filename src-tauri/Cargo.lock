@@ -3,6 +3,24 @@
 version = 3
 
 [[package]]
+name = "Flow-Tracker"
+version = "0.1.0"
+dependencies = [
+ "active-win-pos-rs",
+ "core-graphics 0.23.2",
+ "dirs 5.0.1",
+ "env_logger",
+ "log",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-shell",
+ "winapi",
+]
+
+[[package]]
 name = "active-win-pos-rs"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1003,24 +1021,6 @@ checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
-]
-
-[[package]]
-name = "flow-tracker"
-version = "0.1.0"
-dependencies = [
- "active-win-pos-rs",
- "core-graphics 0.23.2",
- "dirs 5.0.1",
- "env_logger",
- "log",
- "rusqlite",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-shell",
- "winapi",
 ]
 
 [[package]]

@@ -64,7 +64,7 @@ pub fn start_watcher(db: SharedDb, app: AppHandle) {
 // ---------------------------------------------------------------------------
 
 fn poll_loop(db: SharedDb, app: AppHandle) {
-    println!("[FlowTracker] Watcher started (MVP 3 — auto-merge + notifications active)");
+    println!("[Flow Tracker] Watcher started (MVP 3 — auto-merge + notifications active)");
 
     // On startup, close any sessions that were left `active` from a previous run.
     // This happens when the process is killed/restarted without a clean shutdown.
@@ -80,7 +80,7 @@ fn poll_loop(db: SharedDb, app: AppHandle) {
             rusqlite::params![now],
         ).unwrap_or(0);
         if affected > 0 {
-            println!("[FlowTracker] Closed {} stale active session(s) from previous run", affected);
+            println!("[Flow Tracker] Closed {} stale active session(s) from previous run", affected);
         }
     }
 
@@ -120,17 +120,25 @@ fn poll_loop(db: SharedDb, app: AppHandle) {
                             let conn = db.lock().unwrap_or_else(|e| e.into_inner());
                             pause_session(&conn, sid);
                             session_paused = true;
-                            println!("[FlowTracker] Idle — session {} paused", sid);
+                            println!("[Flow Tracker] Idle — session {} paused", sid);
                         }
                     }
                 } else {
+                    // User is active — resume session if it was paused by idle.
+                    if session_paused {
+                        if let Some(sid) = current_session_id {
+                            let conn = db.lock().unwrap_or_else(|e| e.into_inner());
+                            resume_session(&conn, sid);
+                            println!("[Flow Tracker] Idle over — session {} resumed", sid);
+                        }
+                    }
                     session_paused = false;
                     let same_as_current = current_process.as_deref() == Some(&process);
 
                     if same_as_current {
                         // User returned to (or stayed on) the tracked app — cancel any pending switch.
                         if pending_switch.take().is_some() {
-                            println!("[FlowTracker] Grace period cancelled — back on {:?}", process);
+                            println!("[Flow Tracker] Grace period cancelled — back on {:?}", process);
                             let _ = app.emit("flow:session-opened", current_session_id.unwrap_or(0));
                         }
                     } else if current_session_id.is_none() && current_process.is_none() {
@@ -140,17 +148,17 @@ fn poll_loop(db: SharedDb, app: AppHandle) {
                             let conn = db.lock().unwrap_or_else(|e| e.into_inner());
                             match open_session(&conn, &process) {
                                 Ok(sid) => {
-                                    println!("[FlowTracker] Started session {} for {:?}", sid, process);
+                                    println!("[Flow Tracker] Started session {} for {:?}", sid, process);
                                     current_session_id = Some(sid);
                                     let _ = app.emit("flow:session-opened", sid);
                                 }
-                                Err(e) => eprintln!("[FlowTracker] open_session failed: {}", e),
+                                Err(e) => eprintln!("[Flow Tracker] open_session failed: {}", e),
                             }
                         }
                         current_process = Some(process);
                     } else {
                         // Different app detected.
-                        // If we're currently on FlowTracker itself, skip grace — switch immediately.
+                        // If we're currently on Flow Tracker itself, skip grace — switch immediately.
                         let from_self = current_process.as_deref()
                             .map(|p| {
                                 let p = p.to_ascii_lowercase();
@@ -167,7 +175,7 @@ fn poll_loop(db: SharedDb, app: AppHandle) {
                                 if effective_grace == 0 {
                                     // Immediate switch — no grace timer.
                                     println!(
-                                        "[FlowTracker] Immediate switch (no grace) {:?} → {:?}",
+                                        "[Flow Tracker] Immediate switch (no grace) {:?} → {:?}",
                                         current_process.as_deref().unwrap_or("none"),
                                         process,
                                     );
@@ -197,18 +205,18 @@ fn poll_loop(db: SharedDb, app: AppHandle) {
                                         let conn = db.lock().unwrap_or_else(|e| e.into_inner());
                                         match open_session(&conn, &process) {
                                             Ok(sid) => {
-                                                println!("[FlowTracker] Started session {} for {:?}", sid, process);
+                                                println!("[Flow Tracker] Started session {} for {:?}", sid, process);
                                                 current_session_id = Some(sid);
                                                 let _ = app.emit("flow:session-opened", sid);
                                             }
-                                            Err(e) => eprintln!("[FlowTracker] open_session failed: {}", e),
+                                            Err(e) => eprintln!("[Flow Tracker] open_session failed: {}", e),
                                         }
                                     }
                                     current_process = Some(process);
                                 } else {
                                     // Start grace timer.
                                     println!(
-                                        "[FlowTracker] Grace period started for {:?} → {:?} ({}s)",
+                                        "[Flow Tracker] Grace period started for {:?} → {:?} ({}s)",
                                         current_process.as_deref().unwrap_or("none"),
                                         process,
                                         effective_grace
@@ -221,7 +229,7 @@ fn poll_loop(db: SharedDb, app: AppHandle) {
                                     // Still seeing the same new app — check if grace period elapsed.
                                     if switched_at.elapsed().as_secs() >= effective_grace {
                                         println!(
-                                            "[FlowTracker] Grace period expired — switching to {:?}",
+                                            "[Flow Tracker] Grace period expired — switching to {:?}",
                                             process
                                         );
                                         pending_switch = None;
@@ -253,13 +261,13 @@ fn poll_loop(db: SharedDb, app: AppHandle) {
                                             match open_session(&conn, &process) {
                                                 Ok(sid) => {
                                                     println!(
-                                                        "[FlowTracker] Started session {} for {:?}",
+                                                        "[Flow Tracker] Started session {} for {:?}",
                                                         sid, process
                                                     );
                                                     current_session_id = Some(sid);
                                                     let _ = app.emit("flow:session-opened", sid);
                                                 }
-                                                Err(e) => eprintln!("[FlowTracker] open_session failed: {}", e),
+                                                Err(e) => eprintln!("[Flow Tracker] open_session failed: {}", e),
                                             }
                                         }
                                         current_process = Some(process);
@@ -268,7 +276,7 @@ fn poll_loop(db: SharedDb, app: AppHandle) {
                                 } else {
                                     // User switched to yet another app — reset grace timer.
                                     println!(
-                                        "[FlowTracker] Grace period reset — now on {:?}",
+                                        "[Flow Tracker] Grace period reset — now on {:?}",
                                         process
                                     );
                                     pending_switch = Some((process.clone(), Instant::now()));
@@ -308,7 +316,7 @@ fn poll_loop(db: SharedDb, app: AppHandle) {
                                         },
                                     );
                                 }
-                                println!("[FlowTracker] No active window — session closed");
+                                println!("[Flow Tracker] No active window — session closed");
                             }
                             current_process = None;
                         }
@@ -378,7 +386,7 @@ fn close_session(conn: &Connection, session_id: i64) {
          WHERE  id = ?2 AND end_time IS NULL",
         params![now, session_id],
     ) {
-        eprintln!("[FlowTracker] Failed to close session {}: {}", session_id, e);
+        eprintln!("[Flow Tracker] Failed to close session {}: {}", session_id, e);
     }
 }
 
@@ -437,7 +445,7 @@ fn close_and_merge(
                  WHERE  id = ?2",
                 params![end_time, prior_id],
             ) {
-                eprintln!("[FlowTracker] Merge update failed: {}", e);
+                eprintln!("[Flow Tracker] Merge update failed: {}", e);
             } else {
                 // Delete the now-absorbed session.
                 let _ = conn.execute("DELETE FROM sessions WHERE id = ?1", params![session_id]);
@@ -449,7 +457,7 @@ fn close_and_merge(
                     )
                     .unwrap_or(duration);
                 println!(
-                    "[FlowTracker] Merged session {} into {} (gap {}s)",
+                    "[Flow Tracker] Merged session {} into {} (gap {}s)",
                     session_id, prior_id, gap
                 );
                 return Some((prior_id, app_name, merged_duration));
@@ -477,7 +485,17 @@ fn pause_session(conn: &Connection, session_id: i64) {
         "UPDATE sessions SET status = 'idle' WHERE id = ?1",
         params![session_id],
     ) {
-        eprintln!("[FlowTracker] Failed to pause session {}: {}", session_id, e);
+        eprintln!("[Flow Tracker] Failed to pause session {}: {}", session_id, e);
+    }
+}
+
+/// Restore a paused (`'idle'`) session back to `'active'`.
+fn resume_session(conn: &Connection, session_id: i64) {
+    if let Err(e) = conn.execute(
+        "UPDATE sessions SET status = 'active' WHERE id = ?1 AND status = 'idle'",
+        params![session_id],
+    ) {
+        eprintln!("[Flow Tracker] Failed to resume session {}: {}", session_id, e);
     }
 }
 
