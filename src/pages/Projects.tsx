@@ -78,7 +78,7 @@ function pillBtn(bg: string, color: string): CSSProperties {
 interface ProjectFormState {
   name: string;
   description: string;
-  clientId: number | null;
+  clientId: string | null;
 }
 
 function emptyForm(): ProjectFormState {
@@ -118,7 +118,7 @@ function ProjectForm({ form, clients, onChange, onSubmit, onCancel, submitLabel 
       <select
         value={form.clientId ?? ""}
         onChange={(e) =>
-          onChange({ ...form, clientId: e.target.value ? Number(e.target.value) : null })
+          onChange({ ...form, clientId: e.target.value ? e.target.value : null })
         }
         style={selectStyle}
       >
@@ -157,7 +157,7 @@ export default function Projects() {
   const [createForm, setCreateForm]   = useState<ProjectFormState>(emptyForm());
 
   // Edit project
-  const [editingId, setEditingId]     = useState<number | null>(null);
+  const [editingId, setEditingId]     = useState<string | null>(null);
   const [editForm, setEditForm]       = useState<ProjectFormState>(emptyForm());
 
   // New client
@@ -219,7 +219,7 @@ export default function Projects() {
     await load();
   };
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = async (id: string) => {
     await deleteProject(id).catch(console.error);
     await load();
   };
@@ -237,7 +237,7 @@ export default function Projects() {
     }
   };
 
-  const handleDeleteClient = async (id: number) => {
+  const handleDeleteClient = async (id: string) => {
     await deleteClient(id).catch(console.error);
     await load();
   };

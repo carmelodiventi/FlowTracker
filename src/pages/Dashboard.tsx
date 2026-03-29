@@ -41,9 +41,15 @@ function appColor(name: string): string {
 function appIcon(name: string): string {
   const n = name.toLowerCase();
   if (n.includes("code") || n.includes("vscode")) return "code";
-  if (n.includes("chrome") || n.includes("safari") || n.includes("firefox") || n.includes("browser"))
+  if (
+    n.includes("chrome") ||
+    n.includes("safari") ||
+    n.includes("firefox") ||
+    n.includes("browser")
+  )
     return "language";
-  if (n.includes("terminal") || n.includes("iterm") || n.includes("warp")) return "terminal";
+  if (n.includes("terminal") || n.includes("iterm") || n.includes("warp"))
+    return "terminal";
   if (n.includes("slack")) return "chat";
   if (n.includes("discord")) return "forum";
   if (n.includes("finder")) return "folder_open";
@@ -86,26 +92,28 @@ export default function Dashboard() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [summary, setSummary] = useState<AppSummary[]>([]);
   const [workSessions, setWorkSessions] = useState<WorkSession[]>([]);
-  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [groupName, setGroupName] = useState("");
   const [showGroupDialog, setShowGroupDialog] = useState(false);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [liveSecs, setLiveSecs] = useState(0);
   const [loading, setLoading] = useState(true);
 
   // Projects state
   const [projects, setProjects] = useState<Project[]>([]);
-  const [selectedProject, setSelectedProject] = useState<number | null>(null);
-  const [newProjectName, setNewProjectName] = useState('');
+  const [selectedProject, setSelectedProject] = useState<string | null>(null);
+  const [newProjectName, setNewProjectName] = useState("");
   const [showNewProject, setShowNewProject] = useState(false);
   const [showExport, setShowExport] = useState(false);
 
   // Collapsible groups state — kept for Work Session (Task) expand/collapse
-  const [editingWsId, setEditingWsId] = useState<number | null>(null);
+  const [editingWsId, setEditingWsId] = useState<string | null>(null);
   const [editWsName, setEditWsName] = useState("");
-  const [editWsProjectId, setEditWsProjectId] = useState<number | null>(null);
-  const [collapsedWs, setCollapsedWs] = useState<Set<number>>(new Set());
-  const [wsExpandedSessions, setWsExpandedSessions] = useState<Map<number, Session[]>>(new Map());
+  const [editWsProjectId, setEditWsProjectId] = useState<string | null>(null);
+  const [collapsedWs, setCollapsedWs] = useState<Set<string>>(new Set());
+  const [wsExpandedSessions, setWsExpandedSessions] = useState<
+    Map<string, Session[]>
+  >(new Map());
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isToday = date === todayISO();
@@ -170,7 +178,9 @@ export default function Dashboard() {
           .sort((a, b) => b.start_time.localeCompare(a.start_time))[0];
         if (active) {
           const started = new Date(
-            active.start_time.endsWith("Z") ? active.start_time : active.start_time + "Z"
+            active.start_time.endsWith("Z")
+              ? active.start_time
+              : active.start_time + "Z",
           );
           setLiveSecs(Math.floor((Date.now() - started.getTime()) / 1000));
         } else {
@@ -182,21 +192,25 @@ export default function Dashboard() {
 
     tick();
     timerRef.current = setInterval(tick, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
   }, [isToday, sessions.length]);
 
   // ── Derived values ──────────────────────────────────────────────────────────
 
   // Only the most recent active session is truly live — guard against stale DB rows.
   const activeSession = useMemo(
-    () => sessions.filter((s) => s.status === "active").sort((a, b) =>
-      b.start_time.localeCompare(a.start_time))[0] ?? null,
-    [sessions]
+    () =>
+      sessions
+        .filter((s) => s.status === "active")
+        .sort((a, b) => b.start_time.localeCompare(a.start_time))[0] ?? null,
+    [sessions],
   );
 
   const totalRecorded = useMemo(
     () => summary.reduce((a, s) => a + s.total_secs, 0),
-    [summary]
+    [summary],
   );
   const totalSecs = totalRecorded + liveSecs;
   const maxSecs = summary[0]?.total_secs || 1;
@@ -204,13 +218,13 @@ export default function Dashboard() {
   // Past sessions (excluding the currently active one)
   const pastSessions = useMemo(
     () => sessions.filter((s) => s.id !== activeSession?.id),
-    [sessions, activeSession]
+    [sessions, activeSession],
   );
 
   // Unlabelled = past sessions not yet assigned to any Task (work_session_id is null/0)
   const unlabelledSessions = useMemo(
     () => pastSessions.filter((s) => !s.work_session_id),
-    [pastSessions]
+    [pastSessions],
   );
 
   // ── Handlers ────────────────────────────────────────────────────────────────
@@ -221,7 +235,7 @@ export default function Dashboard() {
     setDate(d.toISOString().slice(0, 10));
   };
 
-  const toggleSelect = (id: number) => {
+  const toggleSelect = (id: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
@@ -229,33 +243,42 @@ export default function Dashboard() {
     });
   };
 
-  const handleDeleteSession = async (id: number) => {
+  const handleDeleteSession = async (id: string) => {
     await deleteSession(id).catch(console.error);
-    setSelected((prev) => { const n = new Set(prev); n.delete(id); return n; });
+    setSelected((prev) => {
+      const n = new Set(prev);
+      n.delete(id);
+      return n;
+    });
     await load();
   };
 
   const handleCreateWorkSession = async () => {
     if (selected.size < 1 || !groupName.trim()) return;
-    const ws = await createWorkSession(groupName.trim(), Array.from(selected)).catch(console.error);
+    const ws = await createWorkSession(
+      groupName.trim(),
+      Array.from(selected),
+    ).catch(console.error);
     if (ws && selectedProject !== null) {
-      await assignWorkSessionProject(ws.id, selectedProject).catch(console.error);
+      await assignWorkSessionProject(ws.id, selectedProject).catch(
+        console.error,
+      );
     }
     setSelected(new Set());
     setGroupName("");
     setSelectedProject(null);
     setShowNewProject(false);
-    setNewProjectName('');
+    setNewProjectName("");
     setShowGroupDialog(false);
     await load();
   };
 
-  const handleDeleteWorkSession = async (id: number) => {
+  const handleDeleteWorkSession = async (id: string) => {
     await deleteWorkSession(id).catch(console.error);
     await load();
   };
 
-  const handleUpdateWorkSession = async (id: number) => {
+  const handleUpdateWorkSession = async (id: string) => {
     const trimmed = editWsName.trim();
     if (trimmed) await updateWorkSession(id, trimmed).catch(console.error);
     await assignWorkSessionProject(id, editWsProjectId).catch(console.error);
@@ -265,29 +288,37 @@ export default function Dashboard() {
     await load();
   };
 
-  const handleToggleWsCollapse = async (wsId: number) => {
-    setCollapsedWs(prev => {
+  const handleToggleWsCollapse = async (wsId: string) => {
+    setCollapsedWs((prev) => {
       const next = new Set(prev);
       if (next.has(wsId)) {
         next.delete(wsId);
         // also clear cached sessions when collapsing
-        setWsExpandedSessions(m => { const nm = new Map(m); nm.delete(wsId); return nm; });
+        setWsExpandedSessions((m) => {
+          const nm = new Map(m);
+          nm.delete(wsId);
+          return nm;
+        });
       } else {
         next.add(wsId);
         // Fetch sessions when expanding
-        listSessionsForWorkSession(wsId).then(sessions => {
-          setWsExpandedSessions(m => new Map(m).set(wsId, sessions));
-        }).catch(console.error);
+        listSessionsForWorkSession(wsId)
+          .then((sessions) => {
+            setWsExpandedSessions((m) => new Map(m).set(wsId, sessions));
+          })
+          .catch(console.error);
       }
       return next;
     });
   };
 
-  const handleRemoveSessionFromWs = async (sessionId: number, wsId: number) => {
+  const handleRemoveSessionFromWs = async (sessionId: string, wsId: string) => {
     await removeSessionFromWorkSession(sessionId).catch(console.error);
     // Refresh the expanded list
-    const updated = await listSessionsForWorkSession(wsId).catch(() => [] as Session[]);
-    setWsExpandedSessions(m => new Map(m).set(wsId, updated));
+    const updated = await listSessionsForWorkSession(wsId).catch(
+      () => [] as Session[],
+    );
+    setWsExpandedSessions((m) => new Map(m).set(wsId, updated));
     await load();
   };
 
@@ -323,19 +354,27 @@ export default function Dashboard() {
         {/* Left: title + date nav */}
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-            <h1 style={{
-              fontFamily: "'Inter', sans-serif",
-              fontWeight: 800,
-              fontSize: 18,
-              letterSpacing: "-0.03em",
-              color: "#f6f6fc",
-              margin: 0,
-            }}>Timeline</h1>
-          
+            <h1
+              style={{
+                fontFamily: "'Inter', sans-serif",
+                fontWeight: 800,
+                fontSize: 18,
+                letterSpacing: "-0.03em",
+                color: "#f6f6fc",
+                margin: 0,
+              }}
+            >
+              Timeline
+            </h1>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <button onClick={() => offsetDate(-1)} style={navBtnStyle}>
-              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>chevron_left</span>
+              <span
+                className="material-symbols-outlined"
+                style={{ fontSize: 16 }}
+              >
+                chevron_left
+              </span>
             </button>
             <button
               onClick={() => !isToday && setDate(todayISO())}
@@ -355,8 +394,17 @@ export default function Dashboard() {
             >
               {isToday ? "Today" : date}
             </button>
-            <button onClick={() => offsetDate(1)} disabled={isToday} style={{ ...navBtnStyle, opacity: isToday ? 0.3 : 1 }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>chevron_right</span>
+            <button
+              onClick={() => offsetDate(1)}
+              disabled={isToday}
+              style={{ ...navBtnStyle, opacity: isToday ? 0.3 : 1 }}
+            >
+              <span
+                className="material-symbols-outlined"
+                style={{ fontSize: 16 }}
+              >
+                chevron_right
+              </span>
             </button>
           </div>
           {/* Hidden date picker */}
@@ -387,7 +435,12 @@ export default function Dashboard() {
               gap: 5,
             }}
           >
-            <span className="material-symbols-outlined" style={{ fontSize: 15 }}>download</span>
+            <span
+              className="material-symbols-outlined"
+              style={{ fontSize: 15 }}
+            >
+              download
+            </span>
             Export
           </button>
           {liveSecs > 0 && (
@@ -404,7 +457,9 @@ export default function Dashboard() {
             >
               <span
                 style={{
-                  width: 6, height: 6, borderRadius: "50%",
+                  width: 6,
+                  height: 6,
+                  borderRadius: "50%",
                   background: "#6affc9",
                   display: "inline-block",
                   animation: "pulse 1.4s infinite",
@@ -424,7 +479,15 @@ export default function Dashboard() {
           >
             {fmtDuration(totalSecs)}
           </span>
-          <span style={{ fontSize: 10, color: "#74757a", fontWeight: 500, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+          <span
+            style={{
+              fontSize: 10,
+              color: "#74757a",
+              fontWeight: 500,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+            }}
+          >
             DAILY TOTAL
           </span>
         </div>
@@ -443,48 +506,63 @@ export default function Dashboard() {
         }}
       >
         {loading ? (
-          <div style={{ color: "#8b949e", textAlign: "center", paddingTop: 80, fontSize: 14 }}>
+          <div
+            style={{
+              color: "#8b949e",
+              textAlign: "center",
+              paddingTop: 80,
+              fontSize: 14,
+            }}
+          >
             Caricamento…
           </div>
         ) : (
           <>
             {/* ── Hero: Date + Big Timer ── */}
             <section style={{ marginBottom: 36 }}>
-              <p style={{
-                fontSize: 12,
-                fontWeight: 500,
-                color: "#aaabb0",
-                fontFamily: "'Inter', sans-serif",
-                letterSpacing: "0.05em",
-                textTransform: "uppercase",
-                marginBottom: 6,
-              }}>
+              <p
+                style={{
+                  fontSize: 12,
+                  fontWeight: 500,
+                  color: "#aaabb0",
+                  fontFamily: "'Inter', sans-serif",
+                  letterSpacing: "0.05em",
+                  textTransform: "uppercase",
+                  marginBottom: 6,
+                }}
+              >
                 {new Date(date + "T12:00:00").toLocaleDateString("en-US", {
-                  weekday: "long", month: "long", day: "numeric"
+                  weekday: "long",
+                  month: "long",
+                  day: "numeric",
                 })}
               </p>
               <div style={{ display: "flex", alignItems: "baseline", gap: 16 }}>
-                <h2 style={{
-                  fontFamily: "'Inter', sans-serif",
-                  fontSize: 64,
-                  fontWeight: 800,
-                  color: "#f6f6fc",
-                  letterSpacing: "-0.04em",
-                  lineHeight: 1,
-                  margin: 0,
-                  fontVariantNumeric: "tabular-nums",
-                }}>
+                <h2
+                  style={{
+                    fontFamily: "'Inter', sans-serif",
+                    fontSize: 64,
+                    fontWeight: 800,
+                    color: "#f6f6fc",
+                    letterSpacing: "-0.04em",
+                    lineHeight: 1,
+                    margin: 0,
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
                   {fmtClock(totalSecs)}
                 </h2>
                 {isToday && (
-                  <span style={{
-                    fontFamily: "Roboto Mono, monospace",
-                    fontSize: 13,
-                    fontWeight: 500,
-                    color: "#6affc9",
-                    letterSpacing: "0.1em",
-                    textTransform: "uppercase",
-                  }}>
+                  <span
+                    style={{
+                      fontFamily: "Roboto Mono, monospace",
+                      fontSize: 13,
+                      fontWeight: 500,
+                      color: "#6affc9",
+                      letterSpacing: "0.1em",
+                      textTransform: "uppercase",
+                    }}
+                  >
                     {liveSecs > 0 ? "● ACTIVE FLOW" : "ACTIVE FLOW"}
                   </span>
                 )}
@@ -542,31 +620,46 @@ export default function Dashboard() {
                   </div>
 
                   {/* Per-app rows */}
-                  <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                  <div
+                    style={{ display: "flex", flexDirection: "column", gap: 7 }}
+                  >
                     {summary.map((app) => (
                       <div
                         key={app.process_name}
-                        style={{ display: "flex", alignItems: "center", gap: 10 }}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 10,
+                        }}
                       >
                         <div
                           style={{
-                            width: 8, height: 8, borderRadius: 2,
-                            background: appColor(app.app_name), flexShrink: 0,
+                            width: 8,
+                            height: 8,
+                            borderRadius: 2,
+                            background: appColor(app.app_name),
+                            flexShrink: 0,
                           }}
                         />
                         <span
                           style={{
-                            fontSize: 12, color: "#c9d1d9", flex: "0 0 140px",
-                            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                            fontSize: 12,
+                            color: "#c9d1d9",
+                            flex: "0 0 140px",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
                           }}
                         >
                           {app.app_name}
                         </span>
                         <div
                           style={{
-                            flex: 1, height: 4,
+                            flex: 1,
+                            height: 4,
                             background: "rgba(255,255,255,0.05)",
-                            borderRadius: 2, overflow: "hidden",
+                            borderRadius: 2,
+                            overflow: "hidden",
                           }}
                         >
                           <div
@@ -582,8 +675,11 @@ export default function Dashboard() {
                         <span
                           style={{
                             fontFamily: "Roboto Mono, monospace",
-                            fontSize: 11, color: "#8b949e",
-                            width: 60, textAlign: "right", flexShrink: 0,
+                            fontSize: 11,
+                            color: "#8b949e",
+                            width: 60,
+                            textAlign: "right",
+                            flexShrink: 0,
                           }}
                         >
                           {fmtDuration(app.total_secs)}
@@ -601,18 +697,20 @@ export default function Dashboard() {
                       paddingLeft: 158,
                     }}
                   >
-                    {["08:00", "10:00", "12:00", "14:00", "16:00", "18:00"].map((t) => (
-                      <span
-                        key={t}
-                        style={{
-                          fontSize: 10,
-                          fontFamily: "Roboto Mono, monospace",
-                          color: "rgba(139,148,158,0.45)",
-                        }}
-                      >
-                        {t}
-                      </span>
-                    ))}
+                    {["08:00", "10:00", "12:00", "14:00", "16:00", "18:00"].map(
+                      (t) => (
+                        <span
+                          key={t}
+                          style={{
+                            fontSize: 10,
+                            fontFamily: "Roboto Mono, monospace",
+                            color: "rgba(139,148,158,0.45)",
+                          }}
+                        >
+                          {t}
+                        </span>
+                      ),
+                    )}
                   </div>
                 </>
               ) : (
@@ -658,127 +756,307 @@ export default function Dashboard() {
               ) : (
                 <>
                   {/* ── 1. LIVE container ── */}
-                  {activeSession && (() => {
-                    const s = activeSession;
-                    const isSelected = selected.has(s.id);
-                    const linkedWs = workSessions.find((w) => w.id === s.work_session_id);
-                    return (
-                      <div style={{ marginBottom: 20 }}>
-                        <div style={{
-                          fontSize: 10, color: "#484f58", fontFamily: "Roboto Mono, monospace",
-                          letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8,
-                          display: "flex", alignItems: "center", gap: 6,
-                        }}>
-                          <span style={{
-                            width: 7, height: 7, borderRadius: "50%",
-                            background: "#6affc9", display: "inline-block",
-                            animation: "pulse 1.4s infinite",
-                          }} />
-                          Now Tracking
-                        </div>
-                        <div
-                          key={s.id}
-                          style={{
-                            display: "flex", alignItems: "center", gap: 10,
-                            padding: "12px 14px",
-                            background: "rgba(106,255,201,0.05)",
-                            borderRadius: 8,
-                            border: "1px solid rgba(106,255,201,0.25)",
-                            transition: "background 0.12s",
-                          }}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => toggleSelect(s.id)}
-                            style={{ accentColor: "#58a6ff", flexShrink: 0, cursor: "pointer" }}
-                          />
-                          <span
-                            className="material-symbols-outlined"
-                            style={{ fontSize: 16, color: "#6affc9", flexShrink: 0 }}
+                  {activeSession &&
+                    (() => {
+                      const s = activeSession;
+                      const isSelected = selected.has(s.id);
+                      const linkedWs = workSessions.find(
+                        (w) => w.id === s.work_session_id,
+                      );
+                      return (
+                        <div style={{ marginBottom: 20 }}>
+                          <div
+                            style={{
+                              fontSize: 10,
+                              color: "#484f58",
+                              fontFamily: "Roboto Mono, monospace",
+                              letterSpacing: "0.1em",
+                              textTransform: "uppercase",
+                              marginBottom: 8,
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 6,
+                            }}
                           >
-                            {appIcon(s.app_name)}
-                          </span>
-                          <span style={{
-                            fontFamily: "Roboto Mono, monospace", fontSize: 11,
-                            color: "#6affc9", flexShrink: 0, minWidth: 50,
-                          }}>
-                            {fmtTime(s.start_time)} →
-                          </span>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <span style={{
-                              fontSize: 13, color: "#f6f6fc", fontWeight: 500,
-                              display: "block", overflow: "hidden",
-                              textOverflow: "ellipsis", whiteSpace: "nowrap",
-                            }}>
-                              {s.app_name}
-                            </span>
+                            <span
+                              style={{
+                                width: 7,
+                                height: 7,
+                                borderRadius: "50%",
+                                background: "#6affc9",
+                                display: "inline-block",
+                                animation: "pulse 1.4s infinite",
+                              }}
+                            />
+                            Now Tracking
                           </div>
-                          <span style={{
-                            fontFamily: "Roboto Mono, monospace",
-                            fontSize: 12, color: "#6affc9", fontWeight: 700, flexShrink: 0,
-                          }}>
-                            {fmtDuration(liveSecs)}
-                          </span>
-                          {linkedWs && (
-                            <span style={{
-                              fontSize: 10, padding: "1px 7px", borderRadius: 10,
-                              background: `${linkedWs.color}22`, color: linkedWs.color,
-                              border: `1px solid ${linkedWs.color}44`,
-                              fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0,
-                            }}>
-                              {linkedWs.name}
+                          <div
+                            key={s.id}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 10,
+                              padding: "12px 14px",
+                              background: "rgba(106,255,201,0.05)",
+                              borderRadius: 8,
+                              border: "1px solid rgba(106,255,201,0.25)",
+                              transition: "background 0.12s",
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleSelect(s.id)}
+                              style={{
+                                accentColor: "#58a6ff",
+                                flexShrink: 0,
+                                cursor: "pointer",
+                              }}
+                            />
+                            <span
+                              className="material-symbols-outlined"
+                              style={{
+                                fontSize: 16,
+                                color: "#6affc9",
+                                flexShrink: 0,
+                              }}
+                            >
+                              {appIcon(s.app_name)}
                             </span>
-                          )}
+                            <span
+                              style={{
+                                fontFamily: "Roboto Mono, monospace",
+                                fontSize: 11,
+                                color: "#6affc9",
+                                flexShrink: 0,
+                                minWidth: 50,
+                              }}
+                            >
+                              {fmtTime(s.start_time)} →
+                            </span>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <span
+                                style={{
+                                  fontSize: 13,
+                                  color: "#f6f6fc",
+                                  fontWeight: 500,
+                                  display: "block",
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {s.app_name}
+                              </span>
+                            </div>
+                            <span
+                              style={{
+                                fontFamily: "Roboto Mono, monospace",
+                                fontSize: 12,
+                                color: "#6affc9",
+                                fontWeight: 700,
+                                flexShrink: 0,
+                              }}
+                            >
+                              {fmtDuration(liveSecs)}
+                            </span>
+                            {linkedWs && (
+                              <span
+                                style={{
+                                  fontSize: 10,
+                                  padding: "1px 7px",
+                                  borderRadius: 10,
+                                  background: `${linkedWs.color}22`,
+                                  color: linkedWs.color,
+                                  border: `1px solid ${linkedWs.color}44`,
+                                  fontWeight: 600,
+                                  whiteSpace: "nowrap",
+                                  flexShrink: 0,
+                                }}
+                              >
+                                {linkedWs.name}
+                              </span>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })()}
+                      );
+                    })()}
 
                   {/* ── 2. UNLABELLED container — sessions not yet assigned to a Task ── */}
                   {unlabelledSessions.length > 0 && (
                     <div style={{ marginBottom: 20 }}>
-                      <div style={{
-                        fontSize: 10, color: "#484f58", fontFamily: "Roboto Mono, monospace",
-                        letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8,
-                      }}>
-                        Unlabelled
+                      <div
+                        style={{
+                          fontSize: 10,
+                          color: "#484f58",
+                          fontFamily: "Roboto Mono, monospace",
+                          letterSpacing: "0.1em",
+                          textTransform: "uppercase",
+                          marginBottom: 8,
+                        }}
+                      >
+                        <span className="material-symbols-outlined">
+                          lightbulb_2
+                        </span>{" "}
+                        Session needing a task
                       </div>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 6,
+                        }}
+                      >
                         {unlabelledSessions.map((s) => {
                           const isSelected = selected.has(s.id);
                           return (
-                            <div key={s.id} style={{ display: "flex", flexDirection: "column" }}>
-                              <div style={{
+                            <div
+                              key={s.id}
+                              style={{
                                 display: "flex",
-                                alignItems: "center",
-                                gap: 10,
-                                padding: "10px 14px",
-                                background: isSelected ? "rgba(88,166,255,0.07)" : "#161b22",
-                                borderRadius: 8,
-                                border: isSelected
-                                  ? "1px solid rgba(88,166,255,0.28)"
-                                  : "1px solid rgba(255,255,255,0.06)",
-                                transition: "background 0.12s, border-color 0.12s",
-                              }}>
-                                <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(s.id)} style={{ width: 14, height: 14, cursor: "pointer", accentColor: "#58a6ff", flexShrink: 0 }} />
-                                <div style={{ width: 30, height: 30, borderRadius: 7, background: `${appColor(s.app_name)}18`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                                  <span className="material-symbols-outlined" style={{ fontSize: 16, color: appColor(s.app_name) }}>{appIcon(s.app_name)}</span>
+                                flexDirection: "column",
+                              }}
+                            >
+                              <div
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 10,
+                                  padding: "10px 14px",
+                                  background: isSelected
+                                    ? "rgba(88,166,255,0.07)"
+                                    : "#161b22",
+                                  borderRadius: 8,
+                                  border: isSelected
+                                    ? "1px solid rgba(88,166,255,0.28)"
+                                    : "1px solid rgba(255,255,255,0.06)",
+                                  transition:
+                                    "background 0.12s, border-color 0.12s",
+                                }}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => toggleSelect(s.id)}
+                                  style={{
+                                    width: 14,
+                                    height: 14,
+                                    cursor: "pointer",
+                                    accentColor: "#58a6ff",
+                                    flexShrink: 0,
+                                  }}
+                                />
+                                <div
+                                  style={{
+                                    width: 30,
+                                    height: 30,
+                                    borderRadius: 7,
+                                    background: `${appColor(s.app_name)}18`,
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    flexShrink: 0,
+                                  }}
+                                >
+                                  <span
+                                    className="material-symbols-outlined"
+                                    style={{
+                                      fontSize: 16,
+                                      color: appColor(s.app_name),
+                                    }}
+                                  >
+                                    {appIcon(s.app_name)}
+                                  </span>
                                 </div>
                                 <div style={{ flex: 1, minWidth: 0 }}>
-                                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                    <span style={{ fontSize: 13, fontWeight: 600, color: "#e6edf3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.app_name}</span>
-                                    {s.status === "confirmed" && <span className="material-symbols-outlined" style={{ fontSize: 13, color: "#3fb950", flexShrink: 0 }}>check_circle</span>}
+                                  <div
+                                    style={{
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 6,
+                                    }}
+                                  >
+                                    <span
+                                      style={{
+                                        fontSize: 13,
+                                        fontWeight: 600,
+                                        color: "#e6edf3",
+                                        overflow: "hidden",
+                                        textOverflow: "ellipsis",
+                                        whiteSpace: "nowrap",
+                                      }}
+                                    >
+                                      {s.app_name}
+                                    </span>
+                                    {s.status === "confirmed" && (
+                                      <span
+                                        className="material-symbols-outlined"
+                                        style={{
+                                          fontSize: 13,
+                                          color: "#3fb950",
+                                          flexShrink: 0,
+                                        }}
+                                      >
+                                        check_circle
+                                      </span>
+                                    )}
                                   </div>
                                 </div>
-                                <div style={{ textAlign: "right", flexShrink: 0 }}>
-                                  <div style={{ fontSize: 11, fontFamily: "Roboto Mono, monospace", color: "#8b949e", marginBottom: 2 }}>{fmtTime(s.start_time)}{s.end_time ? ` – ${fmtTime(s.end_time)}` : " →"}</div>
-                                  <div style={{ fontSize: 12, fontFamily: "Roboto Mono, monospace", color: "#58a6ff", fontWeight: 700 }}>{s.duration ? fmtDuration(s.duration) : "…"}</div>
+                                <div
+                                  style={{ textAlign: "right", flexShrink: 0 }}
+                                >
+                                  <div
+                                    style={{
+                                      fontSize: 11,
+                                      fontFamily: "Roboto Mono, monospace",
+                                      color: "#8b949e",
+                                      marginBottom: 2,
+                                    }}
+                                  >
+                                    {fmtTime(s.start_time)}
+                                    {s.end_time
+                                      ? ` – ${fmtTime(s.end_time)}`
+                                      : " →"}
+                                  </div>
+                                  <div
+                                    style={{
+                                      fontSize: 12,
+                                      fontFamily: "Roboto Mono, monospace",
+                                      color: "#58a6ff",
+                                      fontWeight: 700,
+                                    }}
+                                  >
+                                    {s.duration ? fmtDuration(s.duration) : "…"}
+                                  </div>
                                 </div>
-                                <button onClick={() => setConfirmDeleteId(s.id)} title="Delete session"
-                                  style={{ background: "none", border: "none", color: "#484f58", cursor: "pointer", padding: 4, borderRadius: 4, display: "flex", alignItems: "center", flexShrink: 0, transition: "color 0.12s" }}
-                                  onMouseEnter={(e) => (e.currentTarget.style.color = "#f85149")} onMouseLeave={(e) => (e.currentTarget.style.color = "#484f58")}>
-                                  <span className="material-symbols-outlined" style={{ fontSize: 15 }}>delete</span>
+                                <button
+                                  onClick={() => setConfirmDeleteId(s.id)}
+                                  title="Delete session"
+                                  style={{
+                                    background: "none",
+                                    border: "none",
+                                    color: "#484f58",
+                                    cursor: "pointer",
+                                    padding: 4,
+                                    borderRadius: 4,
+                                    display: "flex",
+                                    alignItems: "center",
+                                    flexShrink: 0,
+                                    transition: "color 0.12s",
+                                  }}
+                                  onMouseEnter={(e) =>
+                                    (e.currentTarget.style.color = "#f85149")
+                                  }
+                                  onMouseLeave={(e) =>
+                                    (e.currentTarget.style.color = "#484f58")
+                                  }
+                                >
+                                  <span
+                                    className="material-symbols-outlined"
+                                    style={{ fontSize: 15 }}
+                                  >
+                                    delete
+                                  </span>
                                 </button>
                               </div>
                             </div>
@@ -794,13 +1072,22 @@ export default function Dashboard() {
             {/* ── Tasks Panel ── */}
             {workSessions.length > 0 && (
               <section style={{ marginBottom: 80 }}>
-                <span style={{ ...sectionLabel, display: "block", marginBottom: 10 }}>
+                <span
+                  style={{
+                    ...sectionLabel,
+                    display: "block",
+                    marginBottom: 10,
+                  }}
+                >
                   Tasks
                 </span>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div
+                  style={{ display: "flex", flexDirection: "column", gap: 8 }}
+                >
                   {workSessions.map((ws) => {
                     const isExpanded = collapsedWs.has(ws.id);
-                    const expandedSessions = wsExpandedSessions.get(ws.id) ?? [];
+                    const expandedSessions =
+                      wsExpandedSessions.get(ws.id) ?? [];
                     return (
                       <div
                         key={ws.id}
@@ -816,7 +1103,8 @@ export default function Dashboard() {
                           style={{
                             padding: "12px 16px",
                             display: "flex",
-                            alignItems: editingWsId === ws.id ? "flex-start" : "center",
+                            alignItems:
+                              editingWsId === ws.id ? "flex-start" : "center",
                             gap: 12,
                           }}
                         >
@@ -825,20 +1113,31 @@ export default function Dashboard() {
                             onClick={() => handleToggleWsCollapse(ws.id)}
                             title={isExpanded ? "Collapse" : "Expand"}
                             style={{
-                              background: "none", border: "none", padding: 0,
-                              cursor: "pointer", color: "#484f58", display: "flex",
-                              alignItems: "center", flexShrink: 0,
+                              background: "none",
+                              border: "none",
+                              padding: 0,
+                              cursor: "pointer",
+                              color: "#484f58",
+                              display: "flex",
+                              alignItems: "center",
+                              flexShrink: 0,
                               marginTop: editingWsId === ws.id ? 4 : 0,
                               transition: "color 0.12s",
                             }}
-                            onMouseEnter={(e) => (e.currentTarget.style.color = "#8b949e")}
-                            onMouseLeave={(e) => (e.currentTarget.style.color = "#484f58")}
+                            onMouseEnter={(e) =>
+                              (e.currentTarget.style.color = "#8b949e")
+                            }
+                            onMouseLeave={(e) =>
+                              (e.currentTarget.style.color = "#484f58")
+                            }
                           >
                             <span
                               className="material-symbols-outlined"
                               style={{
                                 fontSize: 18,
-                                transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
+                                transform: isExpanded
+                                  ? "rotate(90deg)"
+                                  : "rotate(0deg)",
                                 transition: "transform 0.15s",
                               }}
                             >
@@ -849,106 +1148,237 @@ export default function Dashboard() {
                           {/* Color dot */}
                           <div
                             style={{
-                              width: 10, height: 10, borderRadius: "50%",
-                              background: ws.color, flexShrink: 0,
+                              width: 10,
+                              height: 10,
+                              borderRadius: "50%",
+                              background: ws.color,
+                              flexShrink: 0,
                               marginTop: editingWsId === ws.id ? 4 : 0,
                             }}
                           />
 
                           {editingWsId === ws.id ? (
                             /* ── Edit mode ── */
-                            <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1 }}>
+                            <div
+                              style={{
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: 8,
+                                flex: 1,
+                              }}
+                            >
                               <input
                                 autoFocus
                                 value={editWsName}
-                                onChange={e => setEditWsName(e.target.value)}
-                                onKeyDown={e => {
-                                  if (e.key === "Enter") handleUpdateWorkSession(ws.id);
-                                  if (e.key === "Escape") { setEditingWsId(null); }
+                                onChange={(e) => setEditWsName(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter")
+                                    handleUpdateWorkSession(ws.id);
+                                  if (e.key === "Escape") {
+                                    setEditingWsId(null);
+                                  }
                                 }}
                                 style={inlineInput}
                                 placeholder="Task name…"
                               />
-                              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                              <div
+                                style={{
+                                  display: "flex",
+                                  gap: 6,
+                                  flexWrap: "wrap",
+                                }}
+                              >
                                 <button
                                   onClick={() => setEditWsProjectId(null)}
                                   style={{
-                                    padding: "2px 10px", borderRadius: 10, fontSize: 11,
-                                    background: editWsProjectId === null ? "rgba(139,148,158,0.2)" : "transparent",
-                                    border: editWsProjectId === null ? "1px solid #8b949e" : "1px solid rgba(255,255,255,0.1)",
-                                    color: editWsProjectId === null ? "#e6edf3" : "#8b949e",
+                                    padding: "2px 10px",
+                                    borderRadius: 10,
+                                    fontSize: 11,
+                                    background:
+                                      editWsProjectId === null
+                                        ? "rgba(139,148,158,0.2)"
+                                        : "transparent",
+                                    border:
+                                      editWsProjectId === null
+                                        ? "1px solid #8b949e"
+                                        : "1px solid rgba(255,255,255,0.1)",
+                                    color:
+                                      editWsProjectId === null
+                                        ? "#e6edf3"
+                                        : "#8b949e",
                                     cursor: "pointer",
                                   }}
-                                >No project</button>
-                                {projects.map(p => (
+                                >
+                                  No project
+                                </button>
+                                {projects.map((p) => (
                                   <button
                                     key={p.id}
                                     onClick={() => setEditWsProjectId(p.id)}
                                     style={{
-                                      padding: "2px 10px", borderRadius: 10, fontSize: 11,
-                                      background: editWsProjectId === p.id ? `${p.color}22` : "transparent",
-                                      border: editWsProjectId === p.id ? `1px solid ${p.color}` : "1px solid rgba(255,255,255,0.1)",
-                                      color: editWsProjectId === p.id ? p.color : "#8b949e",
+                                      padding: "2px 10px",
+                                      borderRadius: 10,
+                                      fontSize: 11,
+                                      background:
+                                        editWsProjectId === p.id
+                                          ? `${p.color}22`
+                                          : "transparent",
+                                      border:
+                                        editWsProjectId === p.id
+                                          ? `1px solid ${p.color}`
+                                          : "1px solid rgba(255,255,255,0.1)",
+                                      color:
+                                        editWsProjectId === p.id
+                                          ? p.color
+                                          : "#8b949e",
                                       cursor: "pointer",
                                     }}
-                                  >{p.name}</button>
+                                  >
+                                    {p.name}
+                                  </button>
                                 ))}
                               </div>
                               <div style={{ display: "flex", gap: 6 }}>
-                                <button onClick={() => handleUpdateWorkSession(ws.id)} style={pillBtn("#3fb950", "#0d1117")}>Save</button>
-                                <button onClick={() => setEditingWsId(null)} style={pillBtn("rgba(255,255,255,0.08)", "#8b949e")}>✕</button>
+                                <button
+                                  onClick={() => handleUpdateWorkSession(ws.id)}
+                                  style={pillBtn("#3fb950", "#0d1117")}
+                                >
+                                  Save
+                                </button>
+                                <button
+                                  onClick={() => setEditingWsId(null)}
+                                  style={pillBtn(
+                                    "rgba(255,255,255,0.08)",
+                                    "#8b949e",
+                                  )}
+                                >
+                                  ✕
+                                </button>
                               </div>
                             </div>
                           ) : (
                             /* ── Display mode ── */
                             <>
                               <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{
-                                  fontSize: 13, fontWeight: 600, color: "#e6edf3", marginBottom: 2,
-                                  display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
-                                }}>
+                                <div
+                                  style={{
+                                    fontSize: 13,
+                                    fontWeight: 600,
+                                    color: "#e6edf3",
+                                    marginBottom: 2,
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 8,
+                                    flexWrap: "wrap",
+                                  }}
+                                >
                                   {ws.name}
                                   {ws.project_name && (
-                                    <span style={{
-                                      padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 500,
-                                      background: `${ws.project_color ?? "#6affc9"}22`,
-                                      border: `1px solid ${ws.project_color ?? "#6affc9"}44`,
-                                      color: ws.project_color ?? "#6affc9",
-                                      display: "flex", alignItems: "center", gap: 4,
-                                    }}>
-                                      <span style={{ width: 6, height: 6, borderRadius: "50%", background: ws.project_color ?? "#6affc9", display: "inline-block" }} />
+                                    <span
+                                      style={{
+                                        padding: "2px 8px",
+                                        borderRadius: 4,
+                                        fontSize: 11,
+                                        fontWeight: 500,
+                                        background: `${ws.project_color ?? "#6affc9"}22`,
+                                        border: `1px solid ${ws.project_color ?? "#6affc9"}44`,
+                                        color: ws.project_color ?? "#6affc9",
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 4,
+                                      }}
+                                    >
+                                      <span
+                                        style={{
+                                          width: 6,
+                                          height: 6,
+                                          borderRadius: "50%",
+                                          background:
+                                            ws.project_color ?? "#6affc9",
+                                          display: "inline-block",
+                                        }}
+                                      />
                                       {ws.project_name}
                                     </span>
                                   )}
                                 </div>
                                 <div style={{ fontSize: 11, color: "#8b949e" }}>
-                                  {ws.app_names || "—"}{" · "}
-                                  <span style={{ fontFamily: "Roboto Mono, monospace", color: ws.color }}>
+                                  {ws.app_names || "—"}
+                                  {" · "}
+                                  <span
+                                    style={{
+                                      fontFamily: "Roboto Mono, monospace",
+                                      color: ws.color,
+                                    }}
+                                  >
                                     {fmtDuration(ws.total_secs)}
                                   </span>
                                   {" · "}
-                                  {ws.session_count} session{ws.session_count !== 1 ? "i" : "e"}
+                                  {ws.session_count} session
+                                  {ws.session_count !== 1 ? "i" : "e"}
                                 </div>
                               </div>
 
                               <button
-                                onClick={() => { setEditingWsId(ws.id); setEditWsName(ws.name); setEditWsProjectId(ws.project_id ?? null); }}
+                                onClick={() => {
+                                  setEditingWsId(ws.id);
+                                  setEditWsName(ws.name);
+                                  setEditWsProjectId(ws.project_id ?? null);
+                                }}
                                 title="Edit task"
-                                style={{ background: "none", border: "none", color: "#484f58", cursor: "pointer", padding: 4, borderRadius: 4, display: "flex", alignItems: "center", transition: "color 0.12s" }}
-                                onMouseEnter={(e) => (e.currentTarget.style.color = "#8b949e")}
-                                onMouseLeave={(e) => (e.currentTarget.style.color = "#484f58")}
+                                style={{
+                                  background: "none",
+                                  border: "none",
+                                  color: "#484f58",
+                                  cursor: "pointer",
+                                  padding: 4,
+                                  borderRadius: 4,
+                                  display: "flex",
+                                  alignItems: "center",
+                                  transition: "color 0.12s",
+                                }}
+                                onMouseEnter={(e) =>
+                                  (e.currentTarget.style.color = "#8b949e")
+                                }
+                                onMouseLeave={(e) =>
+                                  (e.currentTarget.style.color = "#484f58")
+                                }
                               >
-                                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>edit</span>
+                                <span
+                                  className="material-symbols-outlined"
+                                  style={{ fontSize: 16 }}
+                                >
+                                  edit
+                                </span>
                               </button>
 
                               <button
                                 onClick={() => handleDeleteWorkSession(ws.id)}
                                 title="Delete task"
-                                style={{ background: "none", border: "none", color: "#484f58", cursor: "pointer", padding: 4, borderRadius: 4, display: "flex", alignItems: "center", transition: "color 0.12s" }}
-                                onMouseEnter={(e) => (e.currentTarget.style.color = "#f85149")}
-                                onMouseLeave={(e) => (e.currentTarget.style.color = "#484f58")}
+                                style={{
+                                  background: "none",
+                                  border: "none",
+                                  color: "#484f58",
+                                  cursor: "pointer",
+                                  padding: 4,
+                                  borderRadius: 4,
+                                  display: "flex",
+                                  alignItems: "center",
+                                  transition: "color 0.12s",
+                                }}
+                                onMouseEnter={(e) =>
+                                  (e.currentTarget.style.color = "#f85149")
+                                }
+                                onMouseLeave={(e) =>
+                                  (e.currentTarget.style.color = "#484f58")
+                                }
                               >
-                                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
+                                <span
+                                  className="material-symbols-outlined"
+                                  style={{ fontSize: 16 }}
+                                >
+                                  delete
+                                </span>
                               </button>
                             </>
                           )}
@@ -958,11 +1388,17 @@ export default function Dashboard() {
                         {isExpanded && (
                           <div style={{ borderTop: `1px solid ${ws.color}18` }}>
                             {expandedSessions.length === 0 ? (
-                              <div style={{ padding: "10px 48px", fontSize: 12, color: "#484f58" }}>
+                              <div
+                                style={{
+                                  padding: "10px 48px",
+                                  fontSize: 12,
+                                  color: "#484f58",
+                                }}
+                              >
                                 Loading…
                               </div>
                             ) : (
-                              expandedSessions.map(s => (
+                              expandedSessions.map((s) => (
                                 <div
                                   key={s.id}
                                   style={{
@@ -970,26 +1406,73 @@ export default function Dashboard() {
                                     display: "flex",
                                     alignItems: "center",
                                     gap: 12,
-                                    borderBottom: "1px solid rgba(255,255,255,0.04)",
+                                    borderBottom:
+                                      "1px solid rgba(255,255,255,0.04)",
                                   }}
                                 >
-                                  <span style={{ fontSize: 12, color: "#8b949e", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                  <span
+                                    style={{
+                                      fontSize: 12,
+                                      color: "#8b949e",
+                                      flex: 1,
+                                      minWidth: 0,
+                                      overflow: "hidden",
+                                      textOverflow: "ellipsis",
+                                      whiteSpace: "nowrap",
+                                    }}
+                                  >
                                     {s.app_name}
                                     {s.task_name ? (
-                                      <span style={{ marginLeft: 6, color: "#484f58" }}>· {s.task_name}</span>
+                                      <span
+                                        style={{
+                                          marginLeft: 6,
+                                          color: "#484f58",
+                                        }}
+                                      >
+                                        · {s.task_name}
+                                      </span>
                                     ) : null}
                                   </span>
-                                  <span style={{ fontSize: 11, fontFamily: "Roboto Mono, monospace", color: ws.color, flexShrink: 0 }}>
+                                  <span
+                                    style={{
+                                      fontSize: 11,
+                                      fontFamily: "Roboto Mono, monospace",
+                                      color: ws.color,
+                                      flexShrink: 0,
+                                    }}
+                                  >
                                     {fmtDuration(s.duration ?? 0)}
                                   </span>
                                   <button
-                                    onClick={() => handleRemoveSessionFromWs(s.id, ws.id)}
+                                    onClick={() =>
+                                      handleRemoveSessionFromWs(s.id, ws.id)
+                                    }
                                     title="Remove from task"
-                                    style={{ background: "none", border: "none", color: "#484f58", cursor: "pointer", padding: 2, borderRadius: 4, display: "flex", alignItems: "center", transition: "color 0.12s", flexShrink: 0 }}
-                                    onMouseEnter={(e) => (e.currentTarget.style.color = "#f85149")}
-                                    onMouseLeave={(e) => (e.currentTarget.style.color = "#484f58")}
+                                    style={{
+                                      background: "none",
+                                      border: "none",
+                                      color: "#484f58",
+                                      cursor: "pointer",
+                                      padding: 2,
+                                      borderRadius: 4,
+                                      display: "flex",
+                                      alignItems: "center",
+                                      transition: "color 0.12s",
+                                      flexShrink: 0,
+                                    }}
+                                    onMouseEnter={(e) =>
+                                      (e.currentTarget.style.color = "#f85149")
+                                    }
+                                    onMouseLeave={(e) =>
+                                      (e.currentTarget.style.color = "#484f58")
+                                    }
                                   >
-                                    <span className="material-symbols-outlined" style={{ fontSize: 14 }}>remove_circle_outline</span>
+                                    <span
+                                      className="material-symbols-outlined"
+                                      style={{ fontSize: 14 }}
+                                    >
+                                      remove_circle_outline
+                                    </span>
                                   </button>
                                 </div>
                               ))
@@ -1005,7 +1488,13 @@ export default function Dashboard() {
 
             {/* ── Empty state ── */}
             {sessions.length === 0 && summary.length === 0 && (
-              <div style={{ textAlign: "center", paddingTop: 64, color: "#484f58" }}>
+              <div
+                style={{
+                  textAlign: "center",
+                  paddingTop: 64,
+                  color: "#484f58",
+                }}
+              >
                 <span
                   className="material-symbols-outlined"
                   style={{ fontSize: 48, display: "block", marginBottom: 12 }}
@@ -1053,7 +1542,10 @@ export default function Dashboard() {
               letterSpacing: "0.01em",
             }}
           >
-            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
+            <span
+              className="material-symbols-outlined"
+              style={{ fontSize: 18 }}
+            >
               folder_special
             </span>
             Add to Task ({selected.size} session{selected.size > 1 ? "s" : ""})
@@ -1065,36 +1557,64 @@ export default function Dashboard() {
       {confirmDeleteId !== null && (
         <div
           style={{
-            position: "fixed", inset: 0, background: "rgba(0,0,0,0.72)",
-            display: "flex", alignItems: "center", justifyContent: "center", zIndex: 300,
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.72)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 300,
           }}
           onClick={() => setConfirmDeleteId(null)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
             style={{
-              background: "#161b22", borderRadius: 10, padding: "28px 32px",
-              border: "1px solid rgba(248,81,73,0.3)", maxWidth: 340, width: "100%",
-              display: "flex", flexDirection: "column", gap: 20,
+              background: "#161b22",
+              borderRadius: 10,
+              padding: "28px 32px",
+              border: "1px solid rgba(248,81,73,0.3)",
+              maxWidth: 340,
+              width: "100%",
+              display: "flex",
+              flexDirection: "column",
+              gap: 20,
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span className="material-symbols-outlined" style={{ color: "#f85149", fontSize: 22 }}>
+              <span
+                className="material-symbols-outlined"
+                style={{ color: "#f85149", fontSize: 22 }}
+              >
                 delete
               </span>
               <span style={{ fontSize: 15, fontWeight: 600, color: "#f6f6fc" }}>
                 Delete session?
               </span>
             </div>
-            <p style={{ fontSize: 13, color: "#8b949e", margin: 0, lineHeight: 1.5 }}>
+            <p
+              style={{
+                fontSize: 13,
+                color: "#8b949e",
+                margin: 0,
+                lineHeight: 1.5,
+              }}
+            >
               This session will be permanently removed and cannot be undone.
             </p>
-            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+            <div
+              style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}
+            >
               <button
                 onClick={() => setConfirmDeleteId(null)}
                 style={{
-                  padding: "8px 18px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.1)",
-                  background: "transparent", color: "#8b949e", fontSize: 13, cursor: "pointer",
+                  padding: "8px 18px",
+                  borderRadius: 6,
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  background: "transparent",
+                  color: "#8b949e",
+                  fontSize: 13,
+                  cursor: "pointer",
                 }}
               >
                 Cancel
@@ -1105,9 +1625,14 @@ export default function Dashboard() {
                   setConfirmDeleteId(null);
                 }}
                 style={{
-                  padding: "8px 18px", borderRadius: 6, border: "none",
-                  background: "#f85149", color: "#fff", fontSize: 13,
-                  fontWeight: 600, cursor: "pointer",
+                  padding: "8px 18px",
+                  borderRadius: 6,
+                  border: "none",
+                  background: "#f85149",
+                  color: "#fff",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: "pointer",
                 }}
               >
                 Delete
@@ -1129,7 +1654,9 @@ export default function Dashboard() {
             justifyContent: "center",
             zIndex: 200,
           }}
-          onClick={(e) => { if (e.target === e.currentTarget) setShowGroupDialog(false); }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowGroupDialog(false);
+          }}
         >
           <div
             style={{
@@ -1141,19 +1668,41 @@ export default function Dashboard() {
               boxShadow: "0 20px 60px rgba(0,0,0,0.7)",
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                marginBottom: 6,
+              }}
+            >
               <span
                 className="material-symbols-outlined"
                 style={{ fontSize: 22, color: "#58a6ff" }}
               >
                 folder_special
               </span>
-              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#e6edf3" }}>
+              <h3
+                style={{
+                  margin: 0,
+                  fontSize: 16,
+                  fontWeight: 700,
+                  color: "#e6edf3",
+                }}
+              >
                 New Task
               </h3>
             </div>
-            <p style={{ margin: "0 0 20px", fontSize: 12, color: "#8b949e", lineHeight: 1.5 }}>
-              Group {selected.size} session{selected.size > 1 ? "s" : ""} into a named task with an optional project.
+            <p
+              style={{
+                margin: "0 0 20px",
+                fontSize: 12,
+                color: "#8b949e",
+                lineHeight: 1.5,
+              }}
+            >
+              Group {selected.size} session{selected.size > 1 ? "s" : ""} into a
+              named task with an optional project.
             </p>
 
             <input
@@ -1169,46 +1718,75 @@ export default function Dashboard() {
             />
 
             {/* ── Project selector ── */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
-              <span style={{ fontSize: 11, color: '#74757a', fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+                marginTop: 16,
+              }}
+            >
+              <span
+                style={{
+                  fontSize: 11,
+                  color: "#74757a",
+                  fontWeight: 500,
+                  letterSpacing: "0.08em",
+                  textTransform: "uppercase",
+                }}
+              >
                 Project (optional)
               </span>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                 {/* "None" chip */}
                 <button
                   onClick={() => setSelectedProject(null)}
                   style={{
-                    padding: '4px 10px',
+                    padding: "4px 10px",
                     borderRadius: 4,
-                    border: `1px solid ${selectedProject === null ? '#6affc9' : 'rgba(255,255,255,0.1)'}`,
-                    background: selectedProject === null ? 'rgba(106,255,201,0.1)' : 'transparent',
-                    color: selectedProject === null ? '#6affc9' : '#74757a',
+                    border: `1px solid ${selectedProject === null ? "#6affc9" : "rgba(255,255,255,0.1)"}`,
+                    background:
+                      selectedProject === null
+                        ? "rgba(106,255,201,0.1)"
+                        : "transparent",
+                    color: selectedProject === null ? "#6affc9" : "#74757a",
                     fontSize: 12,
-                    cursor: 'pointer',
+                    cursor: "pointer",
                   }}
                 >
                   None
                 </button>
 
                 {/* Existing project chips */}
-                {projects.map(p => (
+                {projects.map((p) => (
                   <button
                     key={p.id}
                     onClick={() => setSelectedProject(p.id)}
                     style={{
-                      padding: '4px 10px',
+                      padding: "4px 10px",
                       borderRadius: 4,
-                      border: `1px solid ${selectedProject === p.id ? p.color : 'rgba(255,255,255,0.1)'}`,
-                      background: selectedProject === p.id ? `${p.color}22` : 'transparent',
-                      color: selectedProject === p.id ? p.color : '#aaabb0',
+                      border: `1px solid ${selectedProject === p.id ? p.color : "rgba(255,255,255,0.1)"}`,
+                      background:
+                        selectedProject === p.id
+                          ? `${p.color}22`
+                          : "transparent",
+                      color: selectedProject === p.id ? p.color : "#aaabb0",
                       fontSize: 12,
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
                       gap: 6,
                     }}
                   >
-                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: p.color, display: 'inline-block' }} />
+                    <span
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: "50%",
+                        background: p.color,
+                        display: "inline-block",
+                      }}
+                    />
                     {p.name}
                   </button>
                 ))}
@@ -1218,42 +1796,54 @@ export default function Dashboard() {
                   <button
                     onClick={() => setShowNewProject(true)}
                     style={{
-                      padding: '4px 10px',
+                      padding: "4px 10px",
                       borderRadius: 4,
-                      border: '1px dashed rgba(255,255,255,0.2)',
-                      background: 'transparent',
-                      color: '#74757a',
+                      border: "1px dashed rgba(255,255,255,0.2)",
+                      background: "transparent",
+                      color: "#74757a",
                       fontSize: 12,
-                      cursor: 'pointer',
+                      cursor: "pointer",
                     }}
                   >
                     + New project
                   </button>
                 ) : (
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <div
+                    style={{ display: "flex", gap: 6, alignItems: "center" }}
+                  >
                     <input
                       autoFocus
                       value={newProjectName}
-                      onChange={e => setNewProjectName(e.target.value)}
-                      onKeyDown={async e => {
-                        if (e.key === 'Enter' && newProjectName.trim()) {
-                          const p = await createProject(newProjectName.trim(), null, null);
-                          setProjects(prev => [...prev, { id: p.id, name: p.name, color: p.color }]);
+                      onChange={(e) => setNewProjectName(e.target.value)}
+                      onKeyDown={async (e) => {
+                        if (e.key === "Enter" && newProjectName.trim()) {
+                          const p = await createProject(
+                            newProjectName.trim(),
+                            null,
+                            null,
+                          );
+                          setProjects((prev) => [
+                            ...prev,
+                            { id: p.id, name: p.name, color: p.color },
+                          ]);
                           setSelectedProject(p.id);
-                          setNewProjectName('');
+                          setNewProjectName("");
                           setShowNewProject(false);
                         }
-                        if (e.key === 'Escape') { setShowNewProject(false); setNewProjectName(''); }
+                        if (e.key === "Escape") {
+                          setShowNewProject(false);
+                          setNewProjectName("");
+                        }
                       }}
                       placeholder="Project name…"
                       style={{
-                        background: '#23262c',
-                        border: '1px solid rgba(106,255,201,0.3)',
+                        background: "#23262c",
+                        border: "1px solid rgba(106,255,201,0.3)",
                         borderRadius: 4,
-                        color: '#f6f6fc',
+                        color: "#f6f6fc",
                         fontSize: 12,
-                        padding: '4px 8px',
-                        outline: 'none',
+                        padding: "4px 8px",
+                        outline: "none",
                         width: 140,
                       }}
                     />

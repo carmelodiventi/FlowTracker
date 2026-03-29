@@ -4,13 +4,13 @@ import { listen } from "@tauri-apps/api/event";
 import { nameSession } from "./api";
 
 interface SessionClosedPayload {
-  session_id: number;
+  session_id: string;
   app_name: string;
   duration_secs: number;
 }
 
 interface NamingToast {
-  session_id: number;
+  session_id: string;
   app_name: string;
   duration_secs: number;
   input: string;
@@ -48,7 +48,7 @@ export default function Layout() {
     setToasts((prev) => prev.filter((t) => t.session_id !== toast.session_id));
   }, []);
 
-  const dismissToast = useCallback((id: number) => {
+  const dismissToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.session_id !== id));
   }, []);
 
