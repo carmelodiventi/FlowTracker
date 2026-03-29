@@ -81,8 +81,14 @@ pub fn run() {
 
             // ── System tray ──────────────────────────────────────────────────
             let menu = build_tray_menu(app.handle())?;
+            let tray_icon = tauri::image::Image::from_path(
+                app.path().resource_dir().unwrap().join("icons/tray-icon.png"),
+            )
+            .unwrap_or_else(|_| app.default_window_icon().unwrap().clone());
+
             let _tray = TrayIconBuilder::with_id("main-tray")
-                .icon(app.default_window_icon().unwrap().clone())
+                .icon(tray_icon)
+                .icon_as_template(true) // macOS: adapt to light/dark mode
                 .menu(&menu)
                 .tooltip("Flow Tracker")
                 .on_tray_icon_event({
