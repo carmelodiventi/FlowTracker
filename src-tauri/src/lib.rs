@@ -16,7 +16,7 @@ use commands::DbState;
 use std::sync::{Arc, Mutex};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::Manager;
+use tauri::{Listener, Manager};
 
 /// Build (or rebuild) the tray menu, querying the DB for the live session.
 fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
@@ -81,30 +81,27 @@ pub fn run() {
 
             // ── System tray ──────────────────────────────────────────────────
             let menu = build_tray_menu(app.handle())?;
-            let _tray = TrayIconBuilder::new()
+            let _tray = TrayIconBuilder::with_id("main-tray")
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
                 .tooltip("Flow Tracker")
-                // Rebuild menu with live session on every click so it's always fresh.
                 .on_tray_icon_event({
                     let handle = app.handle().clone();
-                    move |tray, event| {
+                    move |_tray, event| {
+                        // Left-click: show & focus the window.
                         if let TrayIconEvent::Click {
                             button: MouseButton::Left,
                             button_state: MouseButtonState::Up,
                             ..
                         } = event
                         {
-                            // Left-click: show & focus the window.
                             if let Some(win) = handle.get_webview_window("main") {
                                 let _ = win.show();
                                 let _ = win.set_focus();
                             }
                         }
-                        // Rebuild menu on any interaction so status is current.
-                        if let Ok(m) = build_tray_menu(tray.app_handle()) {
-                            let _ = tray.set_menu(Some(m));
-                        }
+                        // NOTE: do NOT rebuild menu here — it would close the menu
+                        // the instant the user opens it.
                     }
                 })
                 .on_menu_event({
@@ -123,6 +120,29 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            // Rebuild the tray menu whenever a session opens or closes so the
+            // status line stays current without touching the menu while it's open.
+            {
+                let handle = app.handle().clone();
+                app.handle().listen("flow:session-opened", move |_| {
+                    if let Some(tray) = handle.tray_by_id("main-tray") {
+                        if let Ok(m) = build_tray_menu(&handle) {
+                            let _ = tray.set_menu(Some(m));
+                        }
+                    }
+                });
+            }
+            {
+                let handle = app.handle().clone();
+                app.handle().listen("flow:session-closed", move |_| {
+                    if let Some(tray) = handle.tray_by_id("main-tray") {
+                        if let Ok(m) = build_tray_menu(&handle) {
+                            let _ = tray.set_menu(Some(m));
+                        }
+                    }
+                });
+            }
 
             // Start background watcher.
             watcher::start_watcher(Arc::clone(&shared_db), app.handle().clone());
