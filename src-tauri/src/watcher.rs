@@ -152,7 +152,10 @@ fn poll_loop(db: SharedDb, app: AppHandle) {
                         // Different app detected.
                         // If we're currently on FlowTracker itself, skip grace — switch immediately.
                         let from_self = current_process.as_deref()
-                            .map(|p| p.eq_ignore_ascii_case("FlowTracker"))
+                            .map(|p| {
+                                let p = p.to_ascii_lowercase();
+                                p == "flowtracker" || p == "flow-tracker" || p == "flow tracker"
+                            })
                             .unwrap_or(false);
                         let effective_grace = if from_self { 0 } else { grace_secs };
 
