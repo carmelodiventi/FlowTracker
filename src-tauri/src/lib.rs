@@ -74,6 +74,7 @@ pub fn run() {
             commands::create_project,
             commands::assign_work_session_project,
             commands::delete_session,
+            commands::list_task_names,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

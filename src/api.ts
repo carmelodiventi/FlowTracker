@@ -159,3 +159,6 @@ export const assignWorkSessionProject = (
 
 export const deleteSession = (id: number): Promise<void> =>
   invoke("delete_session", { id });
+
+export const listTaskNames = (): Promise<string[]> =>
+  invoke("list_task_names");

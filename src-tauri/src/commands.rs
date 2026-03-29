@@ -749,3 +749,25 @@ pub fn delete_session(state: State<DbState>, id: i64) -> Result<(), String> {
         Ok(())
     }
 }
+
+/// Return distinct task names used recently, ordered by most recent use.
+/// Used to power autocomplete in the session naming UI.
+#[tauri::command]
+pub fn list_task_names(state: State<DbState>) -> Result<Vec<String>, String> {
+    let conn = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    let mut stmt = conn
+        .prepare(
+            "SELECT DISTINCT task_name
+             FROM sessions
+             WHERE task_name IS NOT NULL AND task_name != ''
+             ORDER BY MAX(start_time) DESC
+             LIMIT 50",
+        )
+        .map_err(|e| e.to_string())?;
+    let names = stmt
+        .query_map([], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(names)
+}

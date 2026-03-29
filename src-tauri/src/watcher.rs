@@ -150,22 +150,73 @@ fn poll_loop(db: SharedDb, app: AppHandle) {
                         current_process = Some(process);
                     } else {
                         // Different app detected.
+                        // If we're currently on FlowTracker itself, skip grace — switch immediately.
+                        let from_self = current_process.as_deref()
+                            .map(|p| p.eq_ignore_ascii_case("FlowTracker"))
+                            .unwrap_or(false);
+                        let effective_grace = if from_self { 0 } else { grace_secs };
+
+                        // Helper: commit the session switch to `process`.
+                        // (Defined as a closure-like block below inside the match arms.)
+
                         match &pending_switch {
                             None => {
-                                // First poll seeing a different app — start the grace timer.
-                                println!(
-                                    "[FlowTracker] Grace period started for {:?} → {:?} ({}s)",
-                                    current_process.as_deref().unwrap_or("none"),
-                                    process,
-                                    grace_secs
-                                );
-                                pending_switch = Some((process.clone(), Instant::now()));
-                                // Do NOT close the current session yet.
+                                if effective_grace == 0 {
+                                    // Immediate switch — no grace timer.
+                                    println!(
+                                        "[FlowTracker] Immediate switch (no grace) {:?} → {:?}",
+                                        current_process.as_deref().unwrap_or("none"),
+                                        process,
+                                    );
+                                    pending_switch = None;
+                                    // Commit the switch now.
+                                    if let Some(sid) = current_session_id.take() {
+                                        let merge_threshold = {
+                                            let conn = db.lock().unwrap_or_else(|e| e.into_inner());
+                                            read_setting_i64(&conn, "auto_merge_threshold").unwrap_or(120)
+                                        };
+                                        let surviving = {
+                                            let conn = db.lock().unwrap_or_else(|e| e.into_inner());
+                                            close_and_merge(&conn, sid, merge_threshold)
+                                        };
+                                        if let Some((surviving_id, app_name, duration)) = surviving {
+                                            let _ = app.emit(
+                                                "flow:session-closed",
+                                                SessionClosedPayload {
+                                                    session_id: surviving_id,
+                                                    app_name,
+                                                    duration_secs: duration,
+                                                },
+                                            );
+                                        }
+                                    }
+                                    if is_whitelisted {
+                                        let conn = db.lock().unwrap_or_else(|e| e.into_inner());
+                                        match open_session(&conn, &process) {
+                                            Ok(sid) => {
+                                                println!("[FlowTracker] Started session {} for {:?}", sid, process);
+                                                current_session_id = Some(sid);
+                                                let _ = app.emit("flow:session-opened", sid);
+                                            }
+                                            Err(e) => eprintln!("[FlowTracker] open_session failed: {}", e),
+                                        }
+                                    }
+                                    current_process = Some(process);
+                                } else {
+                                    // Start grace timer.
+                                    println!(
+                                        "[FlowTracker] Grace period started for {:?} → {:?} ({}s)",
+                                        current_process.as_deref().unwrap_or("none"),
+                                        process,
+                                        effective_grace
+                                    );
+                                    pending_switch = Some((process.clone(), Instant::now()));
+                                }
                             }
                             Some((pending_proc, switched_at)) => {
                                 if pending_proc == &process {
                                     // Still seeing the same new app — check if grace period elapsed.
-                                    if switched_at.elapsed().as_secs() >= grace_secs {
+                                    if switched_at.elapsed().as_secs() >= effective_grace {
                                         println!(
                                             "[FlowTracker] Grace period expired — switching to {:?}",
                                             process
