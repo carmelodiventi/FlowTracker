@@ -1,5 +1,5 @@
 [package]
-name = "Flow-Tracker"
+name = "flow-tracker"
 version = "0.1.0"
 description = "Flow Tracker — Privacy-first automatic time tracking"
 authors = []
