@@ -3,11 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import {
   dailySummary,
   listSessionsForDate,
-  nameSession,
   deleteSession,
-  listTaskNames,
-  renameTaskGroup,
-  deleteTaskGroup,
   listWorkSessions,
   createWorkSession,
   updateWorkSession,
@@ -15,8 +11,11 @@ import {
   listProjects,
   createProject,
   assignWorkSessionProject,
+  listSessionsForWorkSession,
+  removeSessionFromWorkSession,
 } from "../api";
 import type { Session, AppSummary, WorkSession, Project } from "../api";
+import ExportModal from "../components/ExportModal";
 
 // ─── Color helpers ────────────────────────────────────────────────────────────
 
@@ -88,31 +87,25 @@ export default function Dashboard() {
   const [summary, setSummary] = useState<AppSummary[]>([]);
   const [workSessions, setWorkSessions] = useState<WorkSession[]>([]);
   const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [editName, setEditName] = useState("");
   const [groupName, setGroupName] = useState("");
   const [showGroupDialog, setShowGroupDialog] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [liveSecs, setLiveSecs] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [taskNames, setTaskNames] = useState<string[]>([]);
-  const [editingGroup, setEditingGroup] = useState<string | null>(null); // current task_name being renamed
-  const [editGroupName, setEditGroupName] = useState("");
-  const [confirmDeleteGroup, setConfirmDeleteGroup] = useState<string | null>(null);
 
   // Projects state
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<number | null>(null);
   const [newProjectName, setNewProjectName] = useState('');
   const [showNewProject, setShowNewProject] = useState(false);
+  const [showExport, setShowExport] = useState(false);
 
-  // Collapsible groups state
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
-
-  // Work session inline edit state
+  // Collapsible groups state — kept for Work Session (Task) expand/collapse
   const [editingWsId, setEditingWsId] = useState<number | null>(null);
   const [editWsName, setEditWsName] = useState("");
   const [editWsProjectId, setEditWsProjectId] = useState<number | null>(null);
+  const [collapsedWs, setCollapsedWs] = useState<Set<number>>(new Set());
+  const [wsExpandedSessions, setWsExpandedSessions] = useState<Map<number, Session[]>>(new Map());
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isToday = date === todayISO();
@@ -122,18 +115,16 @@ export default function Dashboard() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [sess, summ, ws, projs, names] = await Promise.all([
+      const [sess, summ, ws, projs] = await Promise.all([
         listSessionsForDate(date).catch(() => [] as Session[]),
         dailySummary(date).catch(() => [] as AppSummary[]),
         listWorkSessions(date).catch(() => [] as WorkSession[]),
         listProjects().catch(() => [] as Project[]),
-        listTaskNames().catch(() => [] as string[]),
       ]);
       setSessions(sess);
       setSummary(summ);
       setWorkSessions(ws);
       setProjects(projs);
-      setTaskNames(names);
     } finally {
       setLoading(false);
     }
@@ -210,52 +201,16 @@ export default function Dashboard() {
   const totalSecs = totalRecorded + liveSecs;
   const maxSecs = summary[0]?.total_secs || 1;
 
-  // Group past sessions by task_name. Sessions without a task_name stay ungrouped.
+  // Past sessions (excluding the currently active one)
   const pastSessions = useMemo(
     () => sessions.filter((s) => s.id !== activeSession?.id),
     [sessions, activeSession]
   );
 
-  // Build display list: groups for named sessions, singles for unnamed.
-  // Each item is either a "group" (task_name + sessions) or a "single" session.
-  const groupedPast = useMemo(() => {
-    const groups = new Map<string, Session[]>();
-    const singles: Session[] = [];
-    for (const s of pastSessions) {
-      if (s.task_name) {
-        const arr = groups.get(s.task_name) ?? [];
-        arr.push(s);
-        groups.set(s.task_name, arr);
-      } else {
-        singles.push(s);
-      }
-    }
-    // Merge into ordered display items, keeping chronological order of first occurrence
-    type DisplayItem =
-      | { kind: "group"; task_name: string; sessions: Session[]; total_secs: number }
-      | { kind: "single"; session: Session };
-
-    const items: { sortKey: string; item: DisplayItem }[] = [];
-    for (const [task_name, groupSessions] of groups) {
-      const total_secs = groupSessions.reduce((a, s) => a + (s.duration ?? 0), 0);
-      const sortKey = groupSessions[groupSessions.length - 1].start_time; // latest in group
-      items.push({ sortKey, item: { kind: "group", task_name, sessions: groupSessions, total_secs } });
-    }
-    for (const s of singles) {
-      items.push({ sortKey: s.start_time, item: { kind: "single", session: s } });
-    }
-    // Sort descending (newest first)
-    items.sort((a, b) => b.sortKey.localeCompare(a.sortKey));
-    return items.map((i) => i.item);
-  }, [pastSessions]);
-
-  // Split groupedPast into tagged groups and unlabelled singles
-  const groupItems = groupedPast.filter(
-    (i): i is { kind: "group"; task_name: string; sessions: Session[]; total_secs: number } =>
-      i.kind === "group"
-  );
-  const singleItems = groupedPast.filter(
-    (i): i is { kind: "single"; session: Session } => i.kind === "single"
+  // Unlabelled = past sessions not yet assigned to any Task (work_session_id is null/0)
+  const unlabelledSessions = useMemo(
+    () => pastSessions.filter((s) => !s.work_session_id),
+    [pastSessions]
   );
 
   // ── Handlers ────────────────────────────────────────────────────────────────
@@ -274,32 +229,9 @@ export default function Dashboard() {
     });
   };
 
-  const handleRename = async (id: number) => {
-    if (!editName.trim()) return;
-    await nameSession(id, editName.trim()).catch(console.error);
-    setEditingId(null);
-    setEditName("");
-    await load();
-  };
-
   const handleDeleteSession = async (id: number) => {
     await deleteSession(id).catch(console.error);
     setSelected((prev) => { const n = new Set(prev); n.delete(id); return n; });
-    await load();
-  };
-
-  const handleRenameGroup = async (oldName: string) => {
-    const trimmed = editGroupName.trim();
-    if (!trimmed || trimmed === oldName) { setEditingGroup(null); setEditGroupName(""); return; }
-    await renameTaskGroup(oldName, trimmed).catch(console.error);
-    setEditingGroup(null);
-    setEditGroupName("");
-    await load();
-  };
-
-  const handleDeleteGroup = async (name: string) => {
-    await deleteTaskGroup(name).catch(console.error);
-    setConfirmDeleteGroup(null);
     await load();
   };
 
@@ -330,6 +262,32 @@ export default function Dashboard() {
     setEditingWsId(null);
     setEditWsName("");
     setEditWsProjectId(null);
+    await load();
+  };
+
+  const handleToggleWsCollapse = async (wsId: number) => {
+    setCollapsedWs(prev => {
+      const next = new Set(prev);
+      if (next.has(wsId)) {
+        next.delete(wsId);
+        // also clear cached sessions when collapsing
+        setWsExpandedSessions(m => { const nm = new Map(m); nm.delete(wsId); return nm; });
+      } else {
+        next.add(wsId);
+        // Fetch sessions when expanding
+        listSessionsForWorkSession(wsId).then(sessions => {
+          setWsExpandedSessions(m => new Map(m).set(wsId, sessions));
+        }).catch(console.error);
+      }
+      return next;
+    });
+  };
+
+  const handleRemoveSessionFromWs = async (sessionId: number, wsId: number) => {
+    await removeSessionFromWorkSession(sessionId).catch(console.error);
+    // Refresh the expanded list
+    const updated = await listSessionsForWorkSession(wsId).catch(() => [] as Session[]);
+    setWsExpandedSessions(m => new Map(m).set(wsId, updated));
     await load();
   };
 
@@ -411,8 +369,27 @@ export default function Dashboard() {
           />
         </div>
 
-        {/* Right: compact daily total */}
+        {/* Right: export + compact daily total */}
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <button
+            onClick={() => setShowExport(true)}
+            title="Export time report"
+            style={{
+              background: "rgba(255,255,255,0.06)",
+              border: "1px solid rgba(255,255,255,0.1)",
+              borderRadius: 6,
+              color: "#aaabb0",
+              cursor: "pointer",
+              padding: "4px 10px",
+              fontSize: 12,
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+            }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 15 }}>download</span>
+            Export
+          </button>
           {liveSecs > 0 && (
             <span
               style={{
@@ -684,7 +661,6 @@ export default function Dashboard() {
                   {activeSession && (() => {
                     const s = activeSession;
                     const isSelected = selected.has(s.id);
-                    const isEditing = editingId === s.id;
                     const linkedWs = workSessions.find((w) => w.id === s.work_session_id);
                     return (
                       <div style={{ marginBottom: 20 }}>
@@ -730,37 +706,13 @@ export default function Dashboard() {
                             {fmtTime(s.start_time)} →
                           </span>
                           <div style={{ flex: 1, minWidth: 0 }}>
-                            {isEditing ? (
-                              <input
-                                autoFocus
-                                value={editName}
-                                onChange={(e) => setEditName(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") handleRename(s.id);
-                                  if (e.key === "Escape") { setEditingId(null); setEditName(""); }
-                                }}
-                                onBlur={() => handleRename(s.id)}
-                                style={{
-                                  background: "#0d1117", border: "1px solid rgba(106,255,201,0.4)",
-                                  borderRadius: 4, color: "#f6f6fc", fontSize: 12,
-                                  padding: "3px 7px", outline: "none", width: "100%",
-                                }}
-                                placeholder="What are you working on?"
-                              />
-                            ) : (
-                              <span style={{
-                                fontSize: 13, color: "#f6f6fc", fontWeight: 500,
-                                display: "block", overflow: "hidden",
-                                textOverflow: "ellipsis", whiteSpace: "nowrap",
-                              }}>
-                                {s.app_name}
-                                {s.task_name && (
-                                  <span style={{ color: "#6affc9", fontWeight: 400 }}>
-                                    {" · "}{s.task_name}
-                                  </span>
-                                )}
-                              </span>
-                            )}
+                            <span style={{
+                              fontSize: 13, color: "#f6f6fc", fontWeight: 500,
+                              display: "block", overflow: "hidden",
+                              textOverflow: "ellipsis", whiteSpace: "nowrap",
+                            }}>
+                              {s.app_name}
+                            </span>
                           </div>
                           <span style={{
                             fontFamily: "Roboto Mono, monospace",
@@ -768,13 +720,6 @@ export default function Dashboard() {
                           }}>
                             {fmtDuration(liveSecs)}
                           </span>
-                          <button
-                            onClick={() => { setEditingId(s.id); setEditName(s.task_name ?? ""); }}
-                            title="Name this session"
-                            style={{ background: "none", border: "none", cursor: "pointer", color: "#6affc9", padding: 2, flexShrink: 0 }}
-                          >
-                            <span className="material-symbols-outlined" style={{ fontSize: 15 }}>edit</span>
-                          </button>
                           {linkedWs && (
                             <span style={{
                               fontSize: 10, padding: "1px 7px", borderRadius: 10,
@@ -790,179 +735,8 @@ export default function Dashboard() {
                     );
                   })()}
 
-                  {/* ── 2. GROUPED container (Tagged Sessions) ── */}
-                  {groupItems.length > 0 && (
-                    <div style={{ marginBottom: 20 }}>
-                      <div style={{
-                        fontSize: 10, color: "#484f58", fontFamily: "Roboto Mono, monospace",
-                        letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8,
-                      }}>
-                        Tagged Sessions
-                      </div>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        {groupItems.map((item) => {
-                          const isCollapsed = collapsedGroups.has(item.task_name);
-                          return (
-                            <div key={`group-${item.task_name}`} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                              {/* Group header row */}
-                              <div style={{
-                                display: "flex", alignItems: "center", gap: 8,
-                                padding: "7px 14px",
-                                background: "rgba(88,166,255,0.05)",
-                                borderRadius: 8,
-                                border: "1px solid rgba(88,166,255,0.15)",
-                              }}>
-                                {/* Collapse toggle */}
-                                <button
-                                  onClick={() => setCollapsedGroups(prev => {
-                                    const n = new Set(prev);
-                                    n.has(item.task_name) ? n.delete(item.task_name) : n.add(item.task_name);
-                                    return n;
-                                  })}
-                                  style={{ background: "none", border: "none", color: "#8b949e", cursor: "pointer", padding: 2, display: "flex", alignItems: "center", flexShrink: 0 }}
-                                >
-                                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
-                                    {isCollapsed ? "chevron_right" : "expand_more"}
-                                  </span>
-                                </button>
-
-                                <span className="material-symbols-outlined" style={{ fontSize: 14, color: "#58a6ff" }}>
-                                  label
-                                </span>
-
-                                {editingGroup === item.task_name ? (
-                                  <>
-                                    <input
-                                      autoFocus
-                                      value={editGroupName}
-                                      onChange={(e) => setEditGroupName(e.target.value)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === "Enter") handleRenameGroup(item.task_name);
-                                        if (e.key === "Escape") { setEditingGroup(null); setEditGroupName(""); }
-                                      }}
-                                      style={{ ...inlineInput, flex: 1, fontSize: 12, fontWeight: 700 }}
-                                    />
-                                    <button onClick={() => handleRenameGroup(item.task_name)} style={pillBtn("#3fb950", "#0d1117")}>Save</button>
-                                    <button onClick={() => { setEditingGroup(null); setEditGroupName(""); }} style={pillBtn("rgba(255,255,255,0.08)", "#8b949e")}>✕</button>
-                                  </>
-                                ) : (
-                                  <>
-                                    <span style={{ fontSize: 12, fontWeight: 700, color: "#58a6ff", flex: 1 }}>
-                                      {item.task_name}
-                                    </span>
-                                    <span style={{
-                                      fontSize: 10, color: "#484f58",
-                                      fontFamily: "Roboto Mono, monospace",
-                                      marginRight: 6,
-                                    }}>
-                                      {item.sessions.length} session{item.sessions.length !== 1 ? "s" : ""}
-                                    </span>
-                                    <span style={{
-                                      fontSize: 12, fontWeight: 700, color: "#58a6ff",
-                                      fontFamily: "Roboto Mono, monospace",
-                                      marginRight: 4,
-                                    }}>
-                                      {fmtDuration(item.total_secs)}
-                                    </span>
-                                    <button
-                                      onClick={() => { setEditingGroup(item.task_name); setEditGroupName(item.task_name); }}
-                                      title="Rename group"
-                                      style={{ background: "none", border: "none", color: "#484f58", cursor: "pointer", padding: "2px 4px", borderRadius: 4, display: "flex", alignItems: "center" }}
-                                      onMouseEnter={(e) => (e.currentTarget.style.color = "#58a6ff")}
-                                      onMouseLeave={(e) => (e.currentTarget.style.color = "#484f58")}
-                                    >
-                                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>edit</span>
-                                    </button>
-                                    <button
-                                      onClick={() => setConfirmDeleteGroup(item.task_name)}
-                                      title="Delete group"
-                                      style={{ background: "none", border: "none", color: "#484f58", cursor: "pointer", padding: "2px 4px", borderRadius: 4, display: "flex", alignItems: "center" }}
-                                      onMouseEnter={(e) => (e.currentTarget.style.color = "#f85149")}
-                                      onMouseLeave={(e) => (e.currentTarget.style.color = "#484f58")}
-                                    >
-                                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>delete</span>
-                                    </button>
-                                  </>
-                                )}
-                              </div>
-                              {/* Sessions within group — indented, only when not collapsed */}
-                              {!isCollapsed && (
-                                <div style={{ display: "flex", flexDirection: "column", gap: 3, paddingLeft: 12 }}>
-                                  {item.sessions.map((s) => {
-                                    const isSelected = selected.has(s.id);
-                                    const isEditing = editingId === s.id;
-                                    const linkedWs = workSessions.find((w) => w.id === s.work_session_id);
-                                    const suggestions = isEditing
-                                      ? taskNames.filter((n) => n !== s.task_name && n.toLowerCase().includes(editName.toLowerCase())).slice(0, 6)
-                                      : [];
-                                    return (
-                                      <div key={s.id} style={{ display: "flex", flexDirection: "column" }}>
-                                        <div style={{
-                                          display: "flex", alignItems: "center", gap: 10,
-                                          padding: "9px 14px",
-                                          background: isSelected ? "rgba(88,166,255,0.07)" : "#0d1117",
-                                          borderRadius: 8,
-                                          border: isSelected ? "1px solid rgba(88,166,255,0.28)" : "1px solid rgba(255,255,255,0.04)",
-                                          borderLeft: "2px solid rgba(88,166,255,0.35)",
-                                        }}>
-                                          <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(s.id)} style={{ width: 14, height: 14, cursor: "pointer", accentColor: "#58a6ff", flexShrink: 0 }} />
-                                          <div style={{ width: 28, height: 28, borderRadius: 7, background: `${appColor(s.app_name)}18`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                                            <span className="material-symbols-outlined" style={{ fontSize: 14, color: appColor(s.app_name) }}>{appIcon(s.app_name)}</span>
-                                          </div>
-                                          <div style={{ flex: 1, minWidth: 0 }}>
-                                            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                              <span style={{ fontSize: 13, fontWeight: 600, color: "#e6edf3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.app_name}</span>
-                                              {linkedWs && <span style={{ fontSize: 10, padding: "1px 7px", borderRadius: 10, background: `${linkedWs.color}22`, color: linkedWs.color, border: `1px solid ${linkedWs.color}44`, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }}>{linkedWs.name}</span>}
-                                            </div>
-                                            {isEditing ? (
-                                              <div style={{ display: "flex", gap: 6, marginTop: 4, position: "relative" }}>
-                                                <div style={{ position: "relative", flex: 1 }}>
-                                                  <input autoFocus value={editName} onChange={(e) => setEditName(e.target.value)}
-                                                    onKeyDown={(e) => { if (e.key === "Enter") handleRename(s.id); if (e.key === "Escape") { setEditingId(null); setEditName(""); } }}
-                                                    placeholder="Task name…" style={inlineInput} />
-                                                  {suggestions.length > 0 && (
-                                                    <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, background: "#1c2128", border: "1px solid rgba(88,166,255,0.3)", borderRadius: 6, zIndex: 100, overflow: "hidden" }}>
-                                                      {suggestions.map((name) => (
-                                                        <div key={name} onClick={() => { setEditName(name); setTimeout(() => handleRename(s.id), 0); }}
-                                                          style={{ padding: "7px 12px", fontSize: 12, color: "#c9d1d9", cursor: "pointer", borderBottom: "1px solid rgba(255,255,255,0.04)" }}
-                                                          onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(88,166,255,0.1)"; e.currentTarget.style.color = "#58a6ff"; }}
-                                                          onMouseLeave={(e) => { e.currentTarget.style.background = ""; e.currentTarget.style.color = "#c9d1d9"; }}>
-                                                          {name}
-                                                        </div>
-                                                      ))}
-                                                    </div>
-                                                  )}
-                                                </div>
-                                                <button onClick={() => handleRename(s.id)} style={pillBtn("#3fb950", "#0d1117")}>Salva</button>
-                                                <button onClick={() => { setEditingId(null); setEditName(""); }} style={pillBtn("rgba(255,255,255,0.08)", "#8b949e")}>✕</button>
-                                              </div>
-                                            ) : null}
-                                          </div>
-                                          <div style={{ textAlign: "right", flexShrink: 0 }}>
-                                            <div style={{ fontSize: 11, fontFamily: "Roboto Mono, monospace", color: "#8b949e", marginBottom: 2 }}>{fmtTime(s.start_time)}{s.end_time ? ` – ${fmtTime(s.end_time)}` : " →"}</div>
-                                            <div style={{ fontSize: 12, fontFamily: "Roboto Mono, monospace", color: "#58a6ff", fontWeight: 700 }}>{s.duration ? fmtDuration(s.duration) : "…"}</div>
-                                          </div>
-                                          <button onClick={() => { setEditingId(s.id); setEditName(s.task_name ?? ""); }} title="Edit task name" style={{ background: "none", border: "none", color: "#484f58", cursor: "pointer", padding: 4, borderRadius: 4, display: "flex", alignItems: "center", flexShrink: 0 }} onMouseEnter={(e) => (e.currentTarget.style.color = "#8b949e")} onMouseLeave={(e) => (e.currentTarget.style.color = "#484f58")}>
-                                            <span className="material-symbols-outlined" style={{ fontSize: 15 }}>edit</span>
-                                          </button>
-                                          <button onClick={() => setConfirmDeleteId(s.id)} title="Delete session" style={{ background: "none", border: "none", color: "#484f58", cursor: "pointer", padding: 4, borderRadius: 4, display: "flex", alignItems: "center", flexShrink: 0 }} onMouseEnter={(e) => (e.currentTarget.style.color = "#f85149")} onMouseLeave={(e) => (e.currentTarget.style.color = "#484f58")}>
-                                            <span className="material-symbols-outlined" style={{ fontSize: 15 }}>delete</span>
-                                          </button>
-                                        </div>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* ── 3. ORPHANS container (Unlabelled) ── */}
-                  {singleItems.length > 0 && (
+                  {/* ── 2. UNLABELLED container — sessions not yet assigned to a Task ── */}
+                  {unlabelledSessions.length > 0 && (
                     <div style={{ marginBottom: 20 }}>
                       <div style={{
                         fontSize: 10, color: "#484f58", fontFamily: "Roboto Mono, monospace",
@@ -971,14 +745,8 @@ export default function Dashboard() {
                         Unlabelled
                       </div>
                       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        {singleItems.map((item) => {
-                          const s = item.session;
+                        {unlabelledSessions.map((s) => {
                           const isSelected = selected.has(s.id);
-                          const isEditing = editingId === s.id;
-                          const linkedWs = workSessions.find((w) => w.id === s.work_session_id);
-                          const suggestions = isEditing
-                            ? taskNames.filter((n) => n.toLowerCase().includes(editName.toLowerCase())).slice(0, 6)
-                            : [];
                           return (
                             <div key={s.id} style={{ display: "flex", flexDirection: "column" }}>
                               <div style={{
@@ -1001,49 +769,7 @@ export default function Dashboard() {
                                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                                     <span style={{ fontSize: 13, fontWeight: 600, color: "#e6edf3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.app_name}</span>
                                     {s.status === "confirmed" && <span className="material-symbols-outlined" style={{ fontSize: 13, color: "#3fb950", flexShrink: 0 }}>check_circle</span>}
-                                    {linkedWs && <span style={{ fontSize: 10, padding: "1px 7px", borderRadius: 10, background: `${linkedWs.color}22`, color: linkedWs.color, border: `1px solid ${linkedWs.color}44`, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }}>{linkedWs.name}</span>}
                                   </div>
-                                  {isEditing ? (
-                                    <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-                                      <div style={{ position: "relative", flex: 1 }}>
-                                        <input autoFocus value={editName} onChange={(e) => setEditName(e.target.value)}
-                                          onKeyDown={(e) => { if (e.key === "Enter") handleRename(s.id); if (e.key === "Escape") { setEditingId(null); setEditName(""); } }}
-                                          placeholder="What task are you working on?" style={inlineInput} />
-                                        {suggestions.length > 0 && (
-                                          <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, background: "#1c2128", border: "1px solid rgba(88,166,255,0.3)", borderRadius: 6, zIndex: 100, overflow: "hidden" }}>
-                                            {suggestions.map((name) => (
-                                              <div key={name} onClick={() => { setEditName(name); setTimeout(() => handleRename(s.id), 0); }}
-                                                style={{ padding: "7px 12px", fontSize: 12, color: "#c9d1d9", cursor: "pointer", borderBottom: "1px solid rgba(255,255,255,0.04)" }}
-                                                onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(88,166,255,0.1)"; e.currentTarget.style.color = "#58a6ff"; }}
-                                                onMouseLeave={(e) => { e.currentTarget.style.background = ""; e.currentTarget.style.color = "#c9d1d9"; }}>
-                                                {name}
-                                              </div>
-                                            ))}
-                                          </div>
-                                        )}
-                                      </div>
-                                      <button onClick={() => handleRename(s.id)} style={pillBtn("#3fb950", "#0d1117")}>Save</button>
-                                      <button onClick={() => { setEditingId(null); setEditName(""); }} style={pillBtn("rgba(255,255,255,0.08)", "#8b949e")}>✕</button>
-                                    </div>
-                                  ) : (
-                                    <button
-                                      onClick={() => { setEditingId(s.id); setEditName(""); }}
-                                      style={{
-                                        marginTop: 4,
-                                        display: "inline-flex", alignItems: "center", gap: 4,
-                                        padding: "2px 9px", borderRadius: 10,
-                                        border: "1px dashed rgba(88,166,255,0.3)",
-                                        background: "transparent", color: "#484f58",
-                                        fontSize: 11, cursor: "pointer",
-                                        transition: "border-color 0.12s, color 0.12s",
-                                      }}
-                                      onMouseEnter={(e) => { e.currentTarget.style.borderColor = "rgba(88,166,255,0.7)"; e.currentTarget.style.color = "#58a6ff"; }}
-                                      onMouseLeave={(e) => { e.currentTarget.style.borderColor = "rgba(88,166,255,0.3)"; e.currentTarget.style.color = "#484f58"; }}
-                                    >
-                                      <span className="material-symbols-outlined" style={{ fontSize: 12 }}>add</span>
-                                      Add to a task
-                                    </button>
-                                  )}
                                 </div>
                                 <div style={{ textAlign: "right", flexShrink: 0 }}>
                                   <div style={{ fontSize: 11, fontFamily: "Roboto Mono, monospace", color: "#8b949e", marginBottom: 2 }}>{fmtTime(s.start_time)}{s.end_time ? ` – ${fmtTime(s.end_time)}` : " →"}</div>
@@ -1065,166 +791,214 @@ export default function Dashboard() {
               )}
             </section>
 
-            {/* ── Work Sessions Panel ── */}
+            {/* ── Tasks Panel ── */}
             {workSessions.length > 0 && (
               <section style={{ marginBottom: 80 }}>
                 <span style={{ ...sectionLabel, display: "block", marginBottom: 10 }}>
-                  Work Sessions
+                  Tasks
                 </span>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {workSessions.map((ws) => (
-                    <div
-                      key={ws.id}
-                      style={{
-                        padding: "12px 16px",
-                        background: "#161b22",
-                        borderRadius: 8,
-                        border: `1px solid ${ws.color}2a`,
-                        display: "flex",
-                        alignItems: editingWsId === ws.id ? "flex-start" : "center",
-                        gap: 12,
-                      }}
-                    >
-                      {/* Color dot */}
+                  {workSessions.map((ws) => {
+                    const isExpanded = collapsedWs.has(ws.id);
+                    const expandedSessions = wsExpandedSessions.get(ws.id) ?? [];
+                    return (
                       <div
+                        key={ws.id}
                         style={{
-                          width: 10, height: 10, borderRadius: "50%",
-                          background: ws.color, flexShrink: 0,
-                          marginTop: editingWsId === ws.id ? 4 : 0,
+                          background: "#161b22",
+                          borderRadius: 8,
+                          border: `1px solid ${ws.color}2a`,
+                          overflow: "hidden",
                         }}
-                      />
-
-                      {editingWsId === ws.id ? (
-                        /* ── Edit mode ── */
-                        <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1 }}>
-                          {/* Name input */}
-                          <input
-                            autoFocus
-                            value={editWsName}
-                            onChange={e => setEditWsName(e.target.value)}
-                            onKeyDown={e => {
-                              if (e.key === "Enter") handleUpdateWorkSession(ws.id);
-                              if (e.key === "Escape") { setEditingWsId(null); }
-                            }}
-                            style={inlineInput}
-                            placeholder="Work session name…"
-                          />
-                          {/* Project picker — chip buttons */}
-                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                            <button
-                              onClick={() => setEditWsProjectId(null)}
-                              style={{
-                                padding: "2px 10px", borderRadius: 10, fontSize: 11,
-                                background: editWsProjectId === null ? "rgba(139,148,158,0.2)" : "transparent",
-                                border: editWsProjectId === null ? "1px solid #8b949e" : "1px solid rgba(255,255,255,0.1)",
-                                color: editWsProjectId === null ? "#e6edf3" : "#8b949e",
-                                cursor: "pointer",
-                              }}
-                            >
-                              No project
-                            </button>
-                            {projects.map(p => (
-                              <button
-                                key={p.id}
-                                onClick={() => setEditWsProjectId(p.id)}
-                                style={{
-                                  padding: "2px 10px", borderRadius: 10, fontSize: 11,
-                                  background: editWsProjectId === p.id ? `${p.color}22` : "transparent",
-                                  border: editWsProjectId === p.id ? `1px solid ${p.color}` : "1px solid rgba(255,255,255,0.1)",
-                                  color: editWsProjectId === p.id ? p.color : "#8b949e",
-                                  cursor: "pointer",
-                                }}
-                              >
-                                {p.name}
-                              </button>
-                            ))}
-                          </div>
-                          {/* Save / cancel */}
-                          <div style={{ display: "flex", gap: 6 }}>
-                            <button onClick={() => handleUpdateWorkSession(ws.id)} style={pillBtn("#3fb950", "#0d1117")}>Save</button>
-                            <button onClick={() => setEditingWsId(null)} style={pillBtn("rgba(255,255,255,0.08)", "#8b949e")}>✕</button>
-                          </div>
-                        </div>
-                      ) : (
-                        /* ── Display mode ── */
-                        <>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div
-                              style={{
-                                fontSize: 13, fontWeight: 600, color: "#e6edf3", marginBottom: 2,
-                                display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
-                              }}
-                            >
-                              {ws.name}
-                              {ws.project_name && (
-                                <span style={{
-                                  padding: '2px 8px',
-                                  borderRadius: 4,
-                                  background: `${ws.project_color ?? '#6affc9'}22`,
-                                  border: `1px solid ${ws.project_color ?? '#6affc9'}44`,
-                                  color: ws.project_color ?? '#6affc9',
-                                  fontSize: 11,
-                                  fontWeight: 500,
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: 4,
-                                }}>
-                                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: ws.project_color ?? '#6affc9', display: 'inline-block' }} />
-                                  {ws.project_name}
-                                </span>
-                              )}
-                            </div>
-                            <div style={{ fontSize: 11, color: "#8b949e" }}>
-                              {ws.app_names || "—"}{" · "}
-                              <span
-                                style={{ fontFamily: "Roboto Mono, monospace", color: ws.color }}
-                              >
-                                {fmtDuration(ws.total_secs)}
-                              </span>
-                              {" · "}
-                              {ws.session_count} session{ws.session_count !== 1 ? "i" : "e"}
-                            </div>
-                          </div>
-
-                          {/* Edit button */}
+                      >
+                        {/* ── Header row ── */}
+                        <div
+                          style={{
+                            padding: "12px 16px",
+                            display: "flex",
+                            alignItems: editingWsId === ws.id ? "flex-start" : "center",
+                            gap: 12,
+                          }}
+                        >
+                          {/* Chevron toggle */}
                           <button
-                            onClick={() => { setEditingWsId(ws.id); setEditWsName(ws.name); setEditWsProjectId(ws.project_id ?? null); }}
-                            title="Edit work session"
+                            onClick={() => handleToggleWsCollapse(ws.id)}
+                            title={isExpanded ? "Collapse" : "Expand"}
                             style={{
-                              background: "none", border: "none", color: "#484f58",
-                              cursor: "pointer", padding: 4, borderRadius: 4,
-                              display: "flex", alignItems: "center",
+                              background: "none", border: "none", padding: 0,
+                              cursor: "pointer", color: "#484f58", display: "flex",
+                              alignItems: "center", flexShrink: 0,
+                              marginTop: editingWsId === ws.id ? 4 : 0,
                               transition: "color 0.12s",
                             }}
                             onMouseEnter={(e) => (e.currentTarget.style.color = "#8b949e")}
                             onMouseLeave={(e) => (e.currentTarget.style.color = "#484f58")}
                           >
-                            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
-                              edit
+                            <span
+                              className="material-symbols-outlined"
+                              style={{
+                                fontSize: 18,
+                                transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
+                                transition: "transform 0.15s",
+                              }}
+                            >
+                              chevron_right
                             </span>
                           </button>
 
-                          {/* Delete button */}
-                          <button
-                            onClick={() => handleDeleteWorkSession(ws.id)}
-                            title="Elimina work session"
+                          {/* Color dot */}
+                          <div
                             style={{
-                              background: "none", border: "none", color: "#484f58",
-                              cursor: "pointer", padding: 4, borderRadius: 4,
-                              display: "flex", alignItems: "center",
-                              transition: "color 0.12s",
+                              width: 10, height: 10, borderRadius: "50%",
+                              background: ws.color, flexShrink: 0,
+                              marginTop: editingWsId === ws.id ? 4 : 0,
                             }}
-                            onMouseEnter={(e) => (e.currentTarget.style.color = "#f85149")}
-                            onMouseLeave={(e) => (e.currentTarget.style.color = "#484f58")}
-                          >
-                            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
-                              delete
-                            </span>
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  ))}
+                          />
+
+                          {editingWsId === ws.id ? (
+                            /* ── Edit mode ── */
+                            <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1 }}>
+                              <input
+                                autoFocus
+                                value={editWsName}
+                                onChange={e => setEditWsName(e.target.value)}
+                                onKeyDown={e => {
+                                  if (e.key === "Enter") handleUpdateWorkSession(ws.id);
+                                  if (e.key === "Escape") { setEditingWsId(null); }
+                                }}
+                                style={inlineInput}
+                                placeholder="Task name…"
+                              />
+                              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                                <button
+                                  onClick={() => setEditWsProjectId(null)}
+                                  style={{
+                                    padding: "2px 10px", borderRadius: 10, fontSize: 11,
+                                    background: editWsProjectId === null ? "rgba(139,148,158,0.2)" : "transparent",
+                                    border: editWsProjectId === null ? "1px solid #8b949e" : "1px solid rgba(255,255,255,0.1)",
+                                    color: editWsProjectId === null ? "#e6edf3" : "#8b949e",
+                                    cursor: "pointer",
+                                  }}
+                                >No project</button>
+                                {projects.map(p => (
+                                  <button
+                                    key={p.id}
+                                    onClick={() => setEditWsProjectId(p.id)}
+                                    style={{
+                                      padding: "2px 10px", borderRadius: 10, fontSize: 11,
+                                      background: editWsProjectId === p.id ? `${p.color}22` : "transparent",
+                                      border: editWsProjectId === p.id ? `1px solid ${p.color}` : "1px solid rgba(255,255,255,0.1)",
+                                      color: editWsProjectId === p.id ? p.color : "#8b949e",
+                                      cursor: "pointer",
+                                    }}
+                                  >{p.name}</button>
+                                ))}
+                              </div>
+                              <div style={{ display: "flex", gap: 6 }}>
+                                <button onClick={() => handleUpdateWorkSession(ws.id)} style={pillBtn("#3fb950", "#0d1117")}>Save</button>
+                                <button onClick={() => setEditingWsId(null)} style={pillBtn("rgba(255,255,255,0.08)", "#8b949e")}>✕</button>
+                              </div>
+                            </div>
+                          ) : (
+                            /* ── Display mode ── */
+                            <>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{
+                                  fontSize: 13, fontWeight: 600, color: "#e6edf3", marginBottom: 2,
+                                  display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+                                }}>
+                                  {ws.name}
+                                  {ws.project_name && (
+                                    <span style={{
+                                      padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 500,
+                                      background: `${ws.project_color ?? "#6affc9"}22`,
+                                      border: `1px solid ${ws.project_color ?? "#6affc9"}44`,
+                                      color: ws.project_color ?? "#6affc9",
+                                      display: "flex", alignItems: "center", gap: 4,
+                                    }}>
+                                      <span style={{ width: 6, height: 6, borderRadius: "50%", background: ws.project_color ?? "#6affc9", display: "inline-block" }} />
+                                      {ws.project_name}
+                                    </span>
+                                  )}
+                                </div>
+                                <div style={{ fontSize: 11, color: "#8b949e" }}>
+                                  {ws.app_names || "—"}{" · "}
+                                  <span style={{ fontFamily: "Roboto Mono, monospace", color: ws.color }}>
+                                    {fmtDuration(ws.total_secs)}
+                                  </span>
+                                  {" · "}
+                                  {ws.session_count} session{ws.session_count !== 1 ? "i" : "e"}
+                                </div>
+                              </div>
+
+                              <button
+                                onClick={() => { setEditingWsId(ws.id); setEditWsName(ws.name); setEditWsProjectId(ws.project_id ?? null); }}
+                                title="Edit task"
+                                style={{ background: "none", border: "none", color: "#484f58", cursor: "pointer", padding: 4, borderRadius: 4, display: "flex", alignItems: "center", transition: "color 0.12s" }}
+                                onMouseEnter={(e) => (e.currentTarget.style.color = "#8b949e")}
+                                onMouseLeave={(e) => (e.currentTarget.style.color = "#484f58")}
+                              >
+                                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>edit</span>
+                              </button>
+
+                              <button
+                                onClick={() => handleDeleteWorkSession(ws.id)}
+                                title="Delete task"
+                                style={{ background: "none", border: "none", color: "#484f58", cursor: "pointer", padding: 4, borderRadius: 4, display: "flex", alignItems: "center", transition: "color 0.12s" }}
+                                onMouseEnter={(e) => (e.currentTarget.style.color = "#f85149")}
+                                onMouseLeave={(e) => (e.currentTarget.style.color = "#484f58")}
+                              >
+                                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
+                              </button>
+                            </>
+                          )}
+                        </div>
+
+                        {/* ── Expanded sessions list ── */}
+                        {isExpanded && (
+                          <div style={{ borderTop: `1px solid ${ws.color}18` }}>
+                            {expandedSessions.length === 0 ? (
+                              <div style={{ padding: "10px 48px", fontSize: 12, color: "#484f58" }}>
+                                Loading…
+                              </div>
+                            ) : (
+                              expandedSessions.map(s => (
+                                <div
+                                  key={s.id}
+                                  style={{
+                                    padding: "8px 48px",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 12,
+                                    borderBottom: "1px solid rgba(255,255,255,0.04)",
+                                  }}
+                                >
+                                  <span style={{ fontSize: 12, color: "#8b949e", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                    {s.app_name}
+                                    {s.task_name ? (
+                                      <span style={{ marginLeft: 6, color: "#484f58" }}>· {s.task_name}</span>
+                                    ) : null}
+                                  </span>
+                                  <span style={{ fontSize: 11, fontFamily: "Roboto Mono, monospace", color: ws.color, flexShrink: 0 }}>
+                                    {fmtDuration(s.duration ?? 0)}
+                                  </span>
+                                  <button
+                                    onClick={() => handleRemoveSessionFromWs(s.id, ws.id)}
+                                    title="Remove from task"
+                                    style={{ background: "none", border: "none", color: "#484f58", cursor: "pointer", padding: 2, borderRadius: 4, display: "flex", alignItems: "center", transition: "color 0.12s", flexShrink: 0 }}
+                                    onMouseEnter={(e) => (e.currentTarget.style.color = "#f85149")}
+                                    onMouseLeave={(e) => (e.currentTarget.style.color = "#484f58")}
+                                  >
+                                    <span className="material-symbols-outlined" style={{ fontSize: 14 }}>remove_circle_outline</span>
+                                  </button>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </section>
             )}
@@ -1282,7 +1056,7 @@ export default function Dashboard() {
             <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
               folder_special
             </span>
-            Raggruppa {selected.size} session{selected.size > 1 ? "i" : "e"}
+            Add to Task ({selected.size} session{selected.size > 1 ? "s" : ""})
           </button>
         </div>
       )}
@@ -1343,48 +1117,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* ── Delete Group Confirm Dialog ── */}
-      {confirmDeleteGroup !== null && (
-        <div
-          style={{
-            position: "fixed", inset: 0, background: "rgba(0,0,0,0.72)",
-            display: "flex", alignItems: "center", justifyContent: "center", zIndex: 300,
-          }}
-          onClick={() => setConfirmDeleteGroup(null)}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: "#161b22", borderRadius: 10, padding: "28px 32px",
-              border: "1px solid rgba(248,81,73,0.3)", maxWidth: 360, width: "100%",
-              display: "flex", flexDirection: "column", gap: 20,
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span className="material-symbols-outlined" style={{ color: "#f85149", fontSize: 22 }}>delete</span>
-              <span style={{ fontSize: 15, fontWeight: 600, color: "#f6f6fc" }}>Delete group "{confirmDeleteGroup}"?</span>
-            </div>
-            <p style={{ fontSize: 13, color: "#8b949e", margin: 0, lineHeight: 1.5 }}>
-              The tag will be removed from all sessions in this group. The sessions themselves won't be deleted — they'll move to Unlabelled.
-            </p>
-            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-              <button
-                onClick={() => setConfirmDeleteGroup(null)}
-                style={{ padding: "8px 18px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.1)", background: "transparent", color: "#8b949e", fontSize: 13, cursor: "pointer" }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => handleDeleteGroup(confirmDeleteGroup)}
-                style={{ padding: "8px 18px", borderRadius: 6, border: "none", background: "#f85149", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
-              >
-                Delete group
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* ── Group Dialog ── */}
       {showGroupDialog && (
         <div
@@ -1417,12 +1149,11 @@ export default function Dashboard() {
                 folder_special
               </span>
               <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#e6edf3" }}>
-                Crea Work Session
+                New Task
               </h3>
             </div>
             <p style={{ margin: "0 0 20px", fontSize: 12, color: "#8b949e", lineHeight: 1.5 }}>
-              Raggruppa {selected.size} session{selected.size > 1 ? "i" : "e"} in un blocco
-              di lavoro con nome e colore.
+              Group {selected.size} session{selected.size > 1 ? "s" : ""} into a named task with an optional project.
             </p>
 
             <input
@@ -1506,8 +1237,8 @@ export default function Dashboard() {
                       onChange={e => setNewProjectName(e.target.value)}
                       onKeyDown={async e => {
                         if (e.key === 'Enter' && newProjectName.trim()) {
-                          const p = await createProject(newProjectName.trim());
-                          setProjects(prev => [...prev, p]);
+                          const p = await createProject(newProjectName.trim(), null, null);
+                          setProjects(prev => [...prev, { id: p.id, name: p.name, color: p.color }]);
                           setSelectedProject(p.id);
                           setNewProjectName('');
                           setShowNewProject(false);
@@ -1543,7 +1274,7 @@ export default function Dashboard() {
                 onClick={() => setShowGroupDialog(false)}
                 style={pillBtn("rgba(255,255,255,0.07)", "#8b949e")}
               >
-                Annulla
+                Cancel
               </button>
               <button
                 onClick={handleCreateWorkSession}
@@ -1554,12 +1285,15 @@ export default function Dashboard() {
                   cursor: groupName.trim() ? "pointer" : "not-allowed",
                 }}
               >
-                Crea
+                Create
               </button>
             </div>
           </div>
         </div>
       )}
+
+      {/* Export Modal */}
+      {showExport && <ExportModal onClose={() => setShowExport(false)} />}
 
       {/* Pulse animation for LIVE indicator */}
       <style>{`

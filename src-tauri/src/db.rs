@@ -58,6 +58,13 @@ fn init_schema(conn: &Connection) -> Result<()> {
             value TEXT NOT NULL
         );
 
+        -- Clients: organisations or individuals that projects belong to.
+        CREATE TABLE IF NOT EXISTS clients (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            name       TEXT    NOT NULL UNIQUE,
+            created_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+        );
+
         -- Projects: user-defined labels that can be attached to work sessions.
         CREATE TABLE IF NOT EXISTS projects (
             id    INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -103,6 +110,14 @@ fn init_schema(conn: &Connection) -> Result<()> {
             return Err(e);
         }
     }
+
+    // Add description column to projects.
+    let _ = conn.execute("ALTER TABLE projects ADD COLUMN description TEXT", []);
+    // Add client_id FK column to projects.
+    let _ = conn.execute(
+        "ALTER TABLE projects ADD COLUMN client_id INTEGER REFERENCES clients(id)",
+        [],
+    );
 
     Ok(())
 }

@@ -148,8 +148,12 @@ export const deleteWorkSession = (id: number): Promise<void> =>
 export const listProjects = (): Promise<Project[]> =>
   invoke("list_projects");
 
-export const createProject = (name: string, color?: string): Promise<Project> =>
-  invoke("create_project", { name, color });
+export const createProject = (
+  name: string,
+  description: string | null,
+  clientId: number | null
+): Promise<ProjectDetail> =>
+  invoke("create_project", { name, description, clientId });
 
 export const assignWorkSessionProject = (
   workSessionId: number,
@@ -168,3 +172,57 @@ export const renameTaskGroup = (oldName: string, newName: string): Promise<void>
 
 export const deleteTaskGroup = (name: string): Promise<void> =>
   invoke("delete_task_group", { name });
+
+export const getSessionsForExport = (fromDate: string, toDate: string): Promise<Session[]> =>
+  invoke("get_sessions_for_export", { fromDate, toDate });
+
+export const listSessionsForWorkSession = (workSessionId: number): Promise<Session[]> =>
+  invoke("list_sessions_for_work_session", { workSessionId });
+
+export const removeSessionFromWorkSession = (sessionId: number): Promise<void> =>
+  invoke("remove_session_from_work_session", { sessionId });
+
+// ---------------------------------------------------------------------------
+// Clients
+// ---------------------------------------------------------------------------
+
+export interface Client {
+  id: number;
+  name: string;
+}
+
+export const listClients = (): Promise<Client[]> =>
+  invoke("list_clients");
+
+export const createClient = (name: string): Promise<Client> =>
+  invoke("create_client", { name });
+
+export const deleteClient = (id: number): Promise<void> =>
+  invoke("delete_client", { id });
+
+// ---------------------------------------------------------------------------
+// Projects (extended)
+// ---------------------------------------------------------------------------
+
+export interface ProjectDetail {
+  id: number;
+  name: string;
+  color: string;
+  description: string | null;
+  client_id: number | null;
+  client_name: string | null;
+}
+
+export const listProjectsDetail = (): Promise<ProjectDetail[]> =>
+  invoke("list_projects_detail");
+
+export const updateProject = (
+  id: number,
+  name: string,
+  description: string | null,
+  clientId: number | null
+): Promise<void> =>
+  invoke("update_project", { id, name, description, clientId });
+
+export const deleteProject = (id: number): Promise<void> =>
+  invoke("delete_project", { id });

@@ -65,6 +65,8 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .manage(DbState(Mutex::new(cmd_conn)))
         .setup(move |app| {
             // Create the main window programmatically (windows array in
@@ -179,6 +181,15 @@ pub fn run() {
             commands::list_task_names,
             commands::rename_task_group,
             commands::delete_task_group,
+            commands::get_sessions_for_export,
+            commands::list_sessions_for_work_session,
+            commands::remove_session_from_work_session,
+            commands::list_clients,
+            commands::create_client,
+            commands::delete_client,
+            commands::list_projects_detail,
+            commands::update_project,
+            commands::delete_project,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

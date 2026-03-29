@@ -18,8 +18,9 @@ interface NamingToast {
 
 const NAV = [
   { to: "/", icon: "timeline", label: "Dashboard/Timeline" },
+  { to: "/projects", icon: "folder_open", label: "Projects" },
   { to: "/whitelist", icon: "verified_user", label: "Whitelist" },
-  { to: "/settings", icon: "settings", label: "Impostazioni" },
+  { to: "/settings", icon: "settings", label: "Settings" },
 ];
 
 function formatDuration(secs: number): string {
@@ -160,7 +161,7 @@ export default function Layout() {
                 <div>
                   <div style={{ fontWeight: 600, color: "#f0f6fc", fontSize: 13 }}>{toast.app_name}</div>
                   <div style={{ fontSize: 11, color: "#8b919d", fontFamily: "Roboto Mono, monospace" }}>
-                    {formatDuration(toast.duration_secs)} — che task era?
+                    {formatDuration(toast.duration_secs)} — What task was this?
                   </div>
                 </div>
                 <button onClick={() => dismissToast(toast.session_id)} style={{ color: "#8b919d", background: "none", border: "none", cursor: "pointer", fontSize: 20, lineHeight: 1, padding: 0 }}>×</button>
@@ -168,7 +169,7 @@ export default function Layout() {
               <div style={{ display: "flex", gap: 8 }}>
                 <input
                   type="text"
-                  placeholder="es. Fix bug autenticazione…"
+                  placeholder="e.g. Fix auth bug…"
                   value={toast.input}
                   onChange={(e) => setToasts((prev) => prev.map((t) => t.session_id === toast.session_id ? { ...t, input: e.target.value } : t))}
                   onKeyDown={(e) => e.key === "Enter" && confirmName(toast)}

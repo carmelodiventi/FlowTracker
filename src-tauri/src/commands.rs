@@ -698,22 +698,50 @@ pub fn list_projects(state: State<DbState>) -> Result<Vec<Project>, String> {
     Ok(projects)
 }
 
-/// Create a new project and return it.
+/// Create a new project and return it (auto-assigns a palette colour).
 #[tauri::command]
 pub fn create_project(
-    state: State<DbState>,
     name: String,
-    color: Option<String>,
-) -> Result<Project, String> {
+    description: Option<String>,
+    client_id: Option<i64>,
+    state: State<DbState>,
+) -> Result<ProjectDetail, String> {
+    const PALETTE: &[&str] = &[
+        "#6affc9", "#58a6ff", "#ff7b72", "#d2a8ff",
+        "#ffa657", "#79c0ff", "#56d364", "#e3b341",
+    ];
+
     let conn = state.0.lock().unwrap_or_else(|e| e.into_inner());
-    let color = color.unwrap_or_else(|| "#6affc9".to_string());
+
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM projects", [], |r| r.get(0))
+        .unwrap_or(0);
+    let color = PALETTE[(count as usize) % PALETTE.len()].to_string();
+
     conn.execute(
-        "INSERT INTO projects (name, color) VALUES (?1, ?2)",
-        rusqlite::params![name, color],
+        "INSERT INTO projects (name, color, description, client_id) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![name, color, description, client_id],
     )
     .map_err(|e| e.to_string())?;
     let id = conn.last_insert_rowid();
-    Ok(Project { id, name, color })
+
+    let client_name: Option<String> = client_id.and_then(|cid| {
+        conn.query_row(
+            "SELECT name FROM clients WHERE id = ?1",
+            rusqlite::params![cid],
+            |r| r.get(0),
+        )
+        .ok()
+    });
+
+    Ok(ProjectDetail {
+        id,
+        name,
+        color,
+        description,
+        client_id,
+        client_name,
+    })
 }
 
 /// Assign (or clear) a project on a work session.
@@ -799,4 +827,230 @@ pub fn delete_task_group(name: String, state: State<DbState>) -> Result<(), Stri
     )
     .map(|_| ())
     .map_err(|e| e.to_string())
+}
+
+/// Return all completed sessions in a date range, ordered by task_name then start_time.
+/// Used by the PDF export feature.
+#[tauri::command]
+pub fn get_sessions_for_export(
+    from_date: String,
+    to_date: String,
+    state: State<DbState>,
+) -> Result<Vec<Session>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT s.id, s.app_id, a.name,
+                    s.start_time, s.end_time, s.duration, s.task_name, s.status,
+                    s.work_session_id
+             FROM   sessions     s
+             JOIN   applications a ON a.id = s.app_id
+             WHERE  date(s.start_time) >= ?1
+               AND  date(s.start_time) <= ?2
+               AND  s.end_time IS NOT NULL
+             ORDER  BY s.task_name NULLS LAST, s.start_time ASC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let sessions = stmt
+        .query_map(rusqlite::params![from_date, to_date], |row| {
+            Ok(Session {
+                id: row.get(0)?,
+                app_id: row.get(1)?,
+                app_name: row.get(2)?,
+                start_time: row.get(3)?,
+                end_time: row.get(4)?,
+                duration: row.get(5)?,
+                task_name: row.get(6)?,
+                status: row.get(7)?,
+                work_session_id: row.get(8)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(sessions)
+}
+
+/// Return all sessions linked to a specific work session.
+#[tauri::command]
+pub fn list_sessions_for_work_session(
+    work_session_id: i64,
+    state: State<DbState>,
+) -> Result<Vec<Session>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT s.id, s.app_id, a.name,
+                    s.start_time, s.end_time, s.duration, s.task_name, s.status,
+                    s.work_session_id
+             FROM   sessions     s
+             JOIN   applications a ON a.id = s.app_id
+             WHERE  s.work_session_id = ?1
+             ORDER  BY s.start_time ASC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let sessions = stmt
+        .query_map(rusqlite::params![work_session_id], |row| {
+            Ok(Session {
+                id: row.get(0)?,
+                app_id: row.get(1)?,
+                app_name: row.get(2)?,
+                start_time: row.get(3)?,
+                end_time: row.get(4)?,
+                duration: row.get(5)?,
+                task_name: row.get(6)?,
+                status: row.get(7)?,
+                work_session_id: row.get(8)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(sessions)
+}
+
+/// Remove a single session from its work session (set work_session_id = NULL).
+#[tauri::command]
+pub fn remove_session_from_work_session(
+    session_id: i64,
+    state: State<DbState>,
+) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE sessions SET work_session_id = NULL WHERE id = ?1",
+        rusqlite::params![session_id],
+    )
+    .map(|_| ())
+    .map_err(|e| e.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Clients
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct Client {
+    pub id: i64,
+    pub name: String,
+}
+
+/// Return all clients ordered alphabetically.
+#[tauri::command]
+pub fn list_clients(state: State<DbState>) -> Result<Vec<Client>, String> {
+    let conn = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    let mut stmt = conn
+        .prepare("SELECT id, name FROM clients ORDER BY name ASC")
+        .map_err(|e| e.to_string())?;
+    let clients = stmt
+        .query_map([], |row| {
+            Ok(Client {
+                id:   row.get(0)?,
+                name: row.get(1)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(clients)
+}
+
+/// Create a new client and return it.
+#[tauri::command]
+pub fn create_client(name: String, state: State<DbState>) -> Result<Client, String> {
+    let conn = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    conn.execute(
+        "INSERT INTO clients (name) VALUES (?1)",
+        rusqlite::params![name.trim()],
+    )
+    .map_err(|e| e.to_string())?;
+    let id = conn.last_insert_rowid();
+    Ok(Client { id, name: name.trim().to_string() })
+}
+
+/// Delete a client by ID.
+#[tauri::command]
+pub fn delete_client(id: i64, state: State<DbState>) -> Result<(), String> {
+    let conn = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    conn.execute("DELETE FROM clients WHERE id = ?1", rusqlite::params![id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Projects (extended)
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct ProjectDetail {
+    pub id: i64,
+    pub name: String,
+    pub color: String,
+    pub description: Option<String>,
+    pub client_id: Option<i64>,
+    pub client_name: Option<String>,
+}
+
+/// Return all projects with client info, ordered alphabetically.
+#[tauri::command]
+pub fn list_projects_detail(state: State<DbState>) -> Result<Vec<ProjectDetail>, String> {
+    let conn = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    let mut stmt = conn
+        .prepare(
+            "SELECT p.id, p.name, p.color, p.description, p.client_id, c.name AS client_name
+             FROM projects p
+             LEFT JOIN clients c ON c.id = p.client_id
+             ORDER BY p.name ASC",
+        )
+        .map_err(|e| e.to_string())?;
+    let projects = stmt
+        .query_map([], |row| {
+            Ok(ProjectDetail {
+                id:          row.get(0)?,
+                name:        row.get(1)?,
+                color:       row.get(2)?,
+                description: row.get(3)?,
+                client_id:   row.get(4)?,
+                client_name: row.get(5)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(projects)
+}
+
+/// Update a project's name, description, and client assignment.
+#[tauri::command]
+pub fn update_project(
+    id: i64,
+    name: String,
+    description: Option<String>,
+    client_id: Option<i64>,
+    state: State<DbState>,
+) -> Result<(), String> {
+    let conn = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    conn.execute(
+        "UPDATE projects SET name = ?1, description = ?2, client_id = ?3 WHERE id = ?4",
+        rusqlite::params![name.trim(), description, client_id, id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Delete a project by ID, detaching it from any work sessions that reference it.
+#[tauri::command]
+pub fn delete_project(id: i64, state: State<DbState>) -> Result<(), String> {
+    let conn = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    conn.execute(
+        "UPDATE work_sessions SET project_id = NULL WHERE project_id = ?1",
+        rusqlite::params![id],
+    )
+    .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM projects WHERE id = ?1", rusqlite::params![id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
