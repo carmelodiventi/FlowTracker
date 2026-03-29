@@ -66,6 +66,24 @@ pub fn start_watcher(db: SharedDb, app: AppHandle) {
 fn poll_loop(db: SharedDb, app: AppHandle) {
     println!("[FlowTracker] Watcher started (MVP 3 — auto-merge + notifications active)");
 
+    // On startup, close any sessions that were left `active` from a previous run.
+    // This happens when the process is killed/restarted without a clean shutdown.
+    {
+        let conn = db.lock().unwrap_or_else(|e| e.into_inner());
+        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let affected = conn.execute(
+            "UPDATE sessions
+             SET end_time = ?1,
+                 duration = CAST((julianday(?1) - julianday(start_time)) * 86400 AS INTEGER),
+                 status   = 'pending'
+             WHERE status = 'active'",
+            rusqlite::params![now],
+        ).unwrap_or(0);
+        if affected > 0 {
+            println!("[FlowTracker] Closed {} stale active session(s) from previous run", affected);
+        }
+    }
+
     let mut current_session_id: Option<i64> = None;
     let mut current_process: Option<String> = None;
     let mut session_paused = false;

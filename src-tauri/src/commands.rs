@@ -238,6 +238,7 @@ pub struct Session {
     pub duration: Option<i64>,
     pub task_name: Option<String>,
     pub status: String,
+    pub work_session_id: Option<i64>,
 }
 
 /// Return all sessions whose `start_time` falls on today (UTC), newest first.
@@ -247,7 +248,8 @@ pub fn list_today_sessions(state: State<DbState>) -> Result<Vec<Session>, String
     let mut stmt = conn
         .prepare(
             "SELECT s.id, s.app_id, a.name,
-                    s.start_time, s.end_time, s.duration, s.task_name, s.status
+                    s.start_time, s.end_time, s.duration, s.task_name, s.status,
+                    s.work_session_id
              FROM   sessions     s
              JOIN   applications a ON a.id = s.app_id
              WHERE  date(s.start_time) = date('now')
@@ -266,6 +268,7 @@ pub fn list_today_sessions(state: State<DbState>) -> Result<Vec<Session>, String
                 duration: row.get(5)?,
                 task_name: row.get(6)?,
                 status: row.get(7)?,
+                work_session_id: row.get(8)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -301,7 +304,8 @@ pub fn list_pending_sessions(state: State<DbState>) -> Result<Vec<Session>, Stri
     let mut stmt = conn
         .prepare(
             "SELECT s.id, s.app_id, a.name,
-                    s.start_time, s.end_time, s.duration, s.task_name, s.status
+                    s.start_time, s.end_time, s.duration, s.task_name, s.status,
+                    s.work_session_id
              FROM   sessions     s
              JOIN   applications a ON a.id = s.app_id
              WHERE  s.status = 'pending'
@@ -322,6 +326,7 @@ pub fn list_pending_sessions(state: State<DbState>) -> Result<Vec<Session>, Stri
                 duration: row.get(5)?,
                 task_name: row.get(6)?,
                 status: row.get(7)?,
+                work_session_id: row.get(8)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -342,7 +347,8 @@ pub fn list_sessions_for_date(
     let mut stmt = conn
         .prepare(
             "SELECT s.id, s.app_id, a.name,
-                    s.start_time, s.end_time, s.duration, s.task_name, s.status
+                    s.start_time, s.end_time, s.duration, s.task_name, s.status,
+                    s.work_session_id
              FROM   sessions     s
              JOIN   applications a ON a.id = s.app_id
              WHERE  date(s.start_time) = ?1
@@ -361,6 +367,7 @@ pub fn list_sessions_for_date(
                 duration: row.get(5)?,
                 task_name: row.get(6)?,
                 status: row.get(7)?,
+                work_session_id: row.get(8)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -479,4 +486,249 @@ pub fn open_accessibility_settings() {
             .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
             .spawn();
     }
+}
+
+// ---------------------------------------------------------------------------
+// Work Sessions
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct WorkSession {
+    pub id: i64,
+    pub name: String,
+    pub color: String,
+    pub start_time: String,
+    pub end_time: Option<String>,
+    pub total_secs: i64,      // computed: sum of linked sessions' duration
+    pub session_count: i64,   // number of linked app sessions
+    pub app_names: String,    // comma-separated app names in this work session
+    pub project_id: Option<i64>,
+    pub project_name: Option<String>,
+    pub project_color: Option<String>,
+}
+
+/// Create a new work session from a list of app session IDs.
+/// Sets work_session_id on all provided session IDs.
+/// The work session's start/end time is derived from the earliest/latest session.
+#[tauri::command]
+pub fn create_work_session(
+    state: State<DbState>,
+    name: String,
+    session_ids: Vec<i64>,
+    color: Option<String>,
+) -> Result<WorkSession, String> {
+    if session_ids.is_empty() {
+        return Err("No sessions provided".to_string());
+    }
+    let conn = state.0.lock().unwrap_or_else(|e| e.into_inner());
+
+    // Derive start/end from the linked sessions.
+    let placeholders = session_ids
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("?{}", i + 1))
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        "SELECT MIN(start_time), MAX(COALESCE(end_time, start_time)) \
+         FROM sessions WHERE id IN ({placeholders})"
+    );
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let params_refs: Vec<&dyn rusqlite::ToSql> =
+        session_ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+    let (start_time, end_time): (String, String) = stmt
+        .query_row(params_refs.as_slice(), |row| Ok((row.get(0)?, row.get(1)?)))
+        .map_err(|e| e.to_string())?;
+
+    let color = color.unwrap_or_else(|| "#58a6ff".to_string());
+
+    // Insert the work session row.
+    conn.execute(
+        "INSERT INTO work_sessions (name, color, start_time, end_time) \
+         VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![name, color, start_time, end_time],
+    )
+    .map_err(|e| e.to_string())?;
+    let work_session_id = conn.last_insert_rowid();
+
+    // Link all provided sessions.
+    for sid in &session_ids {
+        conn.execute(
+            "UPDATE sessions SET work_session_id = ?1 WHERE id = ?2",
+            rusqlite::params![work_session_id, sid],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    // Fetch and return the fully-populated WorkSession.
+    fetch_work_session(&conn, work_session_id)
+}
+
+/// List work sessions for a given date (YYYY-MM-DD).
+#[tauri::command]
+pub fn list_work_sessions(
+    state: State<DbState>,
+    date: String,
+) -> Result<Vec<WorkSession>, String> {
+    let conn = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    let mut stmt = conn
+        .prepare(
+            "SELECT ws.id FROM work_sessions ws
+             WHERE date(ws.start_time) = ?1
+             ORDER BY ws.start_time ASC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let ids: Vec<i64> = stmt
+        .query_map(rusqlite::params![date], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    let mut result = Vec::new();
+    for id in ids {
+        if let Ok(ws) = fetch_work_session(&conn, id) {
+            result.push(ws);
+        }
+    }
+    Ok(result)
+}
+
+/// Rename a work session.
+#[tauri::command]
+pub fn update_work_session(
+    state: State<DbState>,
+    id: i64,
+    name: String,
+) -> Result<(), String> {
+    let conn = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    conn.execute(
+        "UPDATE work_sessions SET name = ?1 WHERE id = ?2",
+        rusqlite::params![name, id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Delete a work session and un-link its constituent app sessions.
+#[tauri::command]
+pub fn delete_work_session(
+    state: State<DbState>,
+    id: i64,
+) -> Result<(), String> {
+    let conn = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    conn.execute(
+        "UPDATE sessions SET work_session_id = NULL WHERE work_session_id = ?1",
+        rusqlite::params![id],
+    )
+    .map_err(|e| e.to_string())?;
+    conn.execute(
+        "DELETE FROM work_sessions WHERE id = ?1",
+        rusqlite::params![id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Internal helper: fetch a fully-populated WorkSession by its ID.
+fn fetch_work_session(conn: &rusqlite::Connection, id: i64) -> Result<WorkSession, String> {
+    conn.query_row(
+        "SELECT ws.id, ws.name, ws.color, ws.start_time, ws.end_time,
+                COALESCE(SUM(s.duration), 0)   AS total_secs,
+                COUNT(s.id)                    AS session_count,
+                GROUP_CONCAT(DISTINCT a.name)  AS app_names,
+                ws.project_id,
+                p.name                         AS project_name,
+                p.color                        AS project_color
+         FROM work_sessions ws
+         LEFT JOIN sessions     s ON s.work_session_id = ws.id
+         LEFT JOIN applications a ON a.id = s.app_id
+         LEFT JOIN projects     p ON p.id = ws.project_id
+         WHERE ws.id = ?1
+         GROUP BY ws.id",
+        rusqlite::params![id],
+        |row| {
+            Ok(WorkSession {
+                id:            row.get(0)?,
+                name:          row.get(1)?,
+                color:         row.get(2)?,
+                start_time:    row.get(3)?,
+                end_time:      row.get(4)?,
+                total_secs:    row.get(5)?,
+                session_count: row.get(6)?,
+                app_names:     row.get::<_, Option<String>>(7)?.unwrap_or_default(),
+                project_id:    row.get(8)?,
+                project_name:  row.get(9)?,
+                project_color: row.get(10)?,
+            })
+        },
+    )
+    .map_err(|e| e.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Projects
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct Project {
+    pub id: i64,
+    pub name: String,
+    pub color: String,
+}
+
+/// Return all projects ordered alphabetically.
+#[tauri::command]
+pub fn list_projects(state: State<DbState>) -> Result<Vec<Project>, String> {
+    let conn = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    let mut stmt = conn
+        .prepare("SELECT id, name, color FROM projects ORDER BY name ASC")
+        .map_err(|e| e.to_string())?;
+    let projects = stmt
+        .query_map([], |row| {
+            Ok(Project {
+                id:    row.get(0)?,
+                name:  row.get(1)?,
+                color: row.get(2)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(projects)
+}
+
+/// Create a new project and return it.
+#[tauri::command]
+pub fn create_project(
+    state: State<DbState>,
+    name: String,
+    color: Option<String>,
+) -> Result<Project, String> {
+    let conn = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    let color = color.unwrap_or_else(|| "#6affc9".to_string());
+    conn.execute(
+        "INSERT INTO projects (name, color) VALUES (?1, ?2)",
+        rusqlite::params![name, color],
+    )
+    .map_err(|e| e.to_string())?;
+    let id = conn.last_insert_rowid();
+    Ok(Project { id, name, color })
+}
+
+/// Assign (or clear) a project on a work session.
+/// Pass `project_id = None` to detach the project.
+#[tauri::command]
+pub fn assign_work_session_project(
+    state: State<DbState>,
+    work_session_id: i64,
+    project_id: Option<i64>,
+) -> Result<(), String> {
+    let conn = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    conn.execute(
+        "UPDATE work_sessions SET project_id = ?1 WHERE id = ?2",
+        rusqlite::params![project_id, work_session_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }

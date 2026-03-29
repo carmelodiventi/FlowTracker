@@ -25,6 +25,7 @@ export interface Session {
   duration: number | null; // seconds
   task_name: string | null;
   status: string; // "active" | "pending" | "confirmed" | "idle"
+  work_session_id: number | null;
 }
 
 export interface AppSummary {
@@ -32,6 +33,26 @@ export interface AppSummary {
   process_name: string;
   total_secs: number;
   session_count: number;
+}
+
+export interface WorkSession {
+  id: number;
+  name: string;
+  color: string;
+  start_time: string;
+  end_time: string | null;
+  total_secs: number;      // computed: sum of linked sessions' duration
+  session_count: number;   // number of linked app sessions
+  app_names: string;       // comma-separated app names in this work session
+  project_id: number | null;
+  project_name: string | null;
+  project_color: string | null;
+}
+
+export interface Project {
+  id: number;
+  name: string;
+  color: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -99,3 +120,39 @@ export const checkAccessibility = (): Promise<boolean> =>
 
 export const openAccessibilitySettings = (): Promise<void> =>
   invoke("open_accessibility_settings");
+
+// ---------------------------------------------------------------------------
+// Work Sessions
+// ---------------------------------------------------------------------------
+
+export const createWorkSession = (
+  name: string,
+  session_ids: number[],
+  color?: string
+): Promise<WorkSession> =>
+  invoke("create_work_session", { name, sessionIds: session_ids, color });
+
+export const listWorkSessions = (date: string): Promise<WorkSession[]> =>
+  invoke("list_work_sessions", { date });
+
+export const updateWorkSession = (id: number, name: string): Promise<void> =>
+  invoke("update_work_session", { id, name });
+
+export const deleteWorkSession = (id: number): Promise<void> =>
+  invoke("delete_work_session", { id });
+
+// ---------------------------------------------------------------------------
+// Projects
+// ---------------------------------------------------------------------------
+
+export const listProjects = (): Promise<Project[]> =>
+  invoke("list_projects");
+
+export const createProject = (name: string, color?: string): Promise<Project> =>
+  invoke("create_project", { name, color });
+
+export const assignWorkSessionProject = (
+  workSessionId: number,
+  projectId: number | null
+): Promise<void> =>
+  invoke("assign_work_session_project", { workSessionId, projectId });

@@ -1,284 +1,1144 @@
-import { useEffect, useState, useMemo } from "react";
-import { dailySummary, listSessionsForDate, listPendingSessions, nameSession } from "../api";
-import type { Session, AppSummary } from "../api";
+import { useEffect, useState, useMemo, useRef, useCallback } from "react";
+import {
+  dailySummary,
+  listSessionsForDate,
+  nameSession,
+  listWorkSessions,
+  createWorkSession,
+  deleteWorkSession,
+  listProjects,
+  createProject,
+  assignWorkSessionProject,
+} from "../api";
+import type { Session, AppSummary, WorkSession, Project } from "../api";
 
-// App colors for the timeline blocks
-const APP_COLORS = [
-  "#58a6ff", "#27a640", "#f78166", "#a2c9ff",
-  "#67df70", "#ffb4a3", "#4de6b1", "#d3e4ff",
-];
+// ─── Color helpers ────────────────────────────────────────────────────────────
 
-function formatDuration(secs: number): string {
+const APP_COLORS: Record<string, string> = {
+  Code: "#007acc",
+  "VS Code": "#007acc",
+  Chrome: "#ea4335",
+  Safari: "#006cff",
+  Terminal: "#4caf50",
+  iTerm2: "#4caf50",
+  Slack: "#4a154b",
+  Discord: "#5865f2",
+  Finder: "#62b7f5",
+};
+
+function appColor(name: string): string {
+  if (APP_COLORS[name]) return APP_COLORS[name];
+  let h = 0;
+  for (const c of name) h = (h * 31 + c.charCodeAt(0)) & 0xffff;
+  return `hsl(${h % 360}, 65%, 55%)`;
+}
+
+function appIcon(name: string): string {
+  const n = name.toLowerCase();
+  if (n.includes("code") || n.includes("vscode")) return "code";
+  if (n.includes("chrome") || n.includes("safari") || n.includes("firefox") || n.includes("browser"))
+    return "language";
+  if (n.includes("terminal") || n.includes("iterm") || n.includes("warp")) return "terminal";
+  if (n.includes("slack")) return "chat";
+  if (n.includes("discord")) return "forum";
+  if (n.includes("finder")) return "folder_open";
+  if (n.includes("figma") || n.includes("sketch")) return "design_services";
+  if (n.includes("mail") || n.includes("outlook")) return "mail";
+  return "apps";
+}
+
+// ─── Format helpers ───────────────────────────────────────────────────────────
+
+function todayISO(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function fmtDuration(secs: number): string {
   const h = Math.floor(secs / 3600);
   const m = Math.floor((secs % 3600) / 60);
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
+  const s = secs % 60;
+  return h > 0
+    ? `${String(h).padStart(2, "0")}h ${String(m).padStart(2, "0")}m`
+    : `${String(m).padStart(2, "0")}m ${String(s).padStart(2, "0")}s`;
 }
 
-function toLocalDateStr(d: Date): string {
-  return d.toISOString().slice(0, 10);
+function fmtClock(secs: number): string {
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-function parseIso(s: string): Date {
-  return new Date(s.endsWith("Z") ? s : s + "Z");
+function fmtTime(iso: string): string {
+  const d = new Date(iso.endsWith("Z") ? iso : iso + "Z");
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-// Map a time (minutes since midnight) to a % position on the 8h–22h timeline
-const TIMELINE_START_H = 8;
-const TIMELINE_END_H = 22;
-const TIMELINE_SPAN = (TIMELINE_END_H - TIMELINE_START_H) * 60;
-
-function timeToPercent(iso: string): number {
-  const d = parseIso(iso);
-  const minutesSinceMidnight = d.getUTCHours() * 60 + d.getUTCMinutes();
-  const offset = minutesSinceMidnight - TIMELINE_START_H * 60;
-  return Math.max(0, Math.min(100, (offset / TIMELINE_SPAN) * 100));
-}
-
-function durationToPercent(secs: number): number {
-  return Math.max(0.3, (secs / 60 / TIMELINE_SPAN) * 100);
-}
-
-const HOUR_LABELS = Array.from({ length: TIMELINE_END_H - TIMELINE_START_H + 1 }, (_, i) => TIMELINE_START_H + i);
+// ─── Component ────────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
-  const [date, setDate] = useState(toLocalDateStr(new Date()));
-  const [summary, setSummary] = useState<AppSummary[]>([]);
+  const [date, setDate] = useState(todayISO());
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [pending, setPending] = useState<Session[]>([]);
-  const [naming, setNaming] = useState<Record<number, string>>({});
+  const [summary, setSummary] = useState<AppSummary[]>([]);
+  const [workSessions, setWorkSessions] = useState<WorkSession[]>([]);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editName, setEditName] = useState("");
+  const [groupName, setGroupName] = useState("");
+  const [showGroupDialog, setShowGroupDialog] = useState(false);
+  const [liveSecs, setLiveSecs] = useState(0);
   const [loading, setLoading] = useState(true);
 
-  const load = async (d: string) => {
+  // Projects state
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [selectedProject, setSelectedProject] = useState<number | null>(null);
+  const [newProjectName, setNewProjectName] = useState('');
+  const [showNewProject, setShowNewProject] = useState(false);
+
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isToday = date === todayISO();
+
+  // ── Data loading ────────────────────────────────────────────────────────────
+
+  const load = useCallback(async () => {
     setLoading(true);
-    const [s, sess, p] = await Promise.all([
-      dailySummary(d).catch(() => [] as AppSummary[]),
-      listSessionsForDate(d).catch(() => [] as Session[]),
-      listPendingSessions().catch(() => [] as Session[]),
-    ]);
-    setSummary(s);
-    setSessions(sess);
-    setPending(p);
-    setLoading(false);
-  };
+    try {
+      const [sess, summ, ws, projs] = await Promise.all([
+        listSessionsForDate(date).catch(() => [] as Session[]),
+        dailySummary(date).catch(() => [] as AppSummary[]),
+        listWorkSessions(date).catch(() => [] as WorkSession[]),
+        listProjects().catch(() => [] as Project[]),
+      ]);
+      setSessions(sess);
+      setSummary(summ);
+      setWorkSessions(ws);
+      setProjects(projs);
+    } finally {
+      setLoading(false);
+    }
+  }, [date]);
 
-  useEffect(() => { load(date); }, [date]);
+  useEffect(() => {
+    load();
+    setSelected(new Set());
+  }, [load]);
 
-  const totalSecs = useMemo(() => summary.reduce((a, s) => a + s.total_secs, 0), [summary]);
-  const maxSecs = useMemo(() => summary[0]?.total_secs || 1, [summary]);
+  // ── Live timer (today only) ─────────────────────────────────────────────────
 
-  // Assign a stable color per app name
-  const appColorMap = useMemo(() => {
-    const map: Record<string, string> = {};
-    const seen = [...new Set(sessions.map((s) => s.app_name))];
-    seen.forEach((name, i) => { map[name] = APP_COLORS[i % APP_COLORS.length]; });
-    return map;
-  }, [sessions]);
+  useEffect(() => {
+    if (!isToday) {
+      setLiveSecs(0);
+      return;
+    }
 
-  const confirmName = async (id: number) => {
-    const name = naming[id]?.trim();
-    if (!name) return;
-    await nameSession(id, name).catch(console.error);
-    setPending((prev) => prev.filter((s) => s.id !== id));
-  };
+    const tick = () => {
+      setSessions((prev) => {
+        const active = prev.find((s) => s.status === "active");
+        if (active) {
+          const started = new Date(
+            active.start_time.endsWith("Z") ? active.start_time : active.start_time + "Z"
+          );
+          setLiveSecs(Math.floor((Date.now() - started.getTime()) / 1000));
+        } else {
+          setLiveSecs(0);
+        }
+        return prev;
+      });
+    };
+
+    tick();
+    timerRef.current = setInterval(tick, 1000);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [isToday, sessions.length]);
+
+  // ── Derived values ──────────────────────────────────────────────────────────
+
+  // Only the most recent active session is truly live — guard against stale DB rows.
+  const activeSession = useMemo(
+    () => sessions.filter((s) => s.status === "active").sort((a, b) =>
+      b.start_time.localeCompare(a.start_time))[0] ?? null,
+    [sessions]
+  );
+
+  const totalRecorded = useMemo(
+    () => summary.reduce((a, s) => a + s.total_secs, 0),
+    [summary]
+  );
+  const totalSecs = totalRecorded + liveSecs;
+  const maxSecs = summary[0]?.total_secs || 1;
+
+  // ── Handlers ────────────────────────────────────────────────────────────────
 
   const offsetDate = (delta: number) => {
     const d = new Date(date + "T12:00:00Z");
     d.setUTCDate(d.getUTCDate() + delta);
-    setDate(toLocalDateStr(d));
+    setDate(d.toISOString().slice(0, 10));
   };
 
-  const isToday = date === toLocalDateStr(new Date());
+  const toggleSelect = (id: number) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const handleRename = async (id: number) => {
+    if (!editName.trim()) return;
+    await nameSession(id, editName.trim()).catch(console.error);
+    setEditingId(null);
+    setEditName("");
+    await load();
+  };
+
+  const handleCreateWorkSession = async () => {
+    if (selected.size < 1 || !groupName.trim()) return;
+    const ws = await createWorkSession(groupName.trim(), Array.from(selected)).catch(console.error);
+    if (ws && selectedProject !== null) {
+      await assignWorkSessionProject(ws.id, selectedProject).catch(console.error);
+    }
+    setSelected(new Set());
+    setGroupName("");
+    setSelectedProject(null);
+    setShowNewProject(false);
+    setNewProjectName('');
+    setShowGroupDialog(false);
+    await load();
+  };
+
+  const handleDeleteWorkSession = async (id: number) => {
+    await deleteWorkSession(id).catch(console.error);
+    await load();
+  };
+
+  // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
-      {/* Top bar */}
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "#0d1117",
+        color: "#e6edf3",
+        display: "flex",
+        flexDirection: "column",
+        fontFamily: "'Inter', 'Segoe UI', sans-serif",
+      }}
+    >
+      {/* ── Header ── */}
       <header
         style={{
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "0 32px", height: 56, flexShrink: 0,
-          borderBottom: "1px solid rgba(65,71,82,0.2)", background: "#10141a",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "0 28px",
+          height: 58,
+          borderBottom: "1px solid rgba(255,255,255,0.06)",
+          background: "#010409",
+          flexShrink: 0,
+          position: "sticky",
+          top: 0,
+          zIndex: 20,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <button onClick={() => offsetDate(-1)} style={btnStyle}>
-            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>chevron_left</span>
-          </button>
-          <span style={{ fontFamily: "Roboto Mono, monospace", fontSize: 13, color: "#a2c9ff", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>
-            {isToday ? "Oggi" : date}
-          </span>
-          <button onClick={() => offsetDate(1)} disabled={isToday} style={{ ...btnStyle, opacity: isToday ? 0.3 : 1 }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>chevron_right</span>
-          </button>
+        {/* Left: title + date nav */}
+        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+            <h1 style={{
+              fontFamily: "'Inter', sans-serif",
+              fontWeight: 800,
+              fontSize: 18,
+              letterSpacing: "-0.03em",
+              color: "#f6f6fc",
+              margin: 0,
+            }}>Timeline</h1>
+          
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <button onClick={() => offsetDate(-1)} style={navBtnStyle}>
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>chevron_left</span>
+            </button>
+            <button
+              onClick={() => !isToday && setDate(todayISO())}
+              style={{
+                background: "none",
+                border: "none",
+                cursor: isToday ? "default" : "pointer",
+                color: "#aaabb0",
+                fontFamily: "Roboto Mono, monospace",
+                fontSize: 12,
+                fontWeight: 500,
+                minWidth: 76,
+                textAlign: "center",
+                padding: "3px 6px",
+                borderRadius: 4,
+              }}
+            >
+              {isToday ? "Today" : date}
+            </button>
+            <button onClick={() => offsetDate(1)} disabled={isToday} style={{ ...navBtnStyle, opacity: isToday ? 0.3 : 1 }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>chevron_right</span>
+            </button>
+          </div>
+          {/* Hidden date picker */}
           <input
-            type="date" value={date} onChange={(e) => setDate(e.target.value)}
-            style={{ background: "none", border: "none", color: "#8b919d", cursor: "pointer", fontSize: 12 }}
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+            style={{ opacity: 0, width: 1, height: 1, position: "absolute" }}
+            tabIndex={-1}
           />
         </div>
-        <span style={{ fontFamily: "Roboto Mono, monospace", fontSize: 14, color: "#a2c9ff", fontWeight: 700 }}>
-          {formatDuration(totalSecs)} totale
-        </span>
+
+        {/* Right: compact daily total */}
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {liveSecs > 0 && (
+            <span
+              style={{
+                fontSize: 10,
+                color: "#6affc9",
+                fontFamily: "Roboto Mono, monospace",
+                letterSpacing: "0.06em",
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+              }}
+            >
+              <span
+                style={{
+                  width: 6, height: 6, borderRadius: "50%",
+                  background: "#6affc9",
+                  display: "inline-block",
+                  animation: "pulse 1.4s infinite",
+                }}
+              />
+              LIVE
+            </span>
+          )}
+          <span
+            style={{
+              fontFamily: "Roboto Mono, monospace",
+              fontSize: 15,
+              fontWeight: 700,
+              color: "#6affc9",
+              letterSpacing: "0.04em",
+            }}
+          >
+            {fmtDuration(totalSecs)}
+          </span>
+          <span style={{ fontSize: 10, color: "#74757a", fontWeight: 500, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+            DAILY TOTAL
+          </span>
+        </div>
       </header>
 
-      <div className="flex-1 overflow-y-auto" style={{ padding: "24px 32px" }}>
+      {/* ── Body ── */}
+      <div
+        style={{
+          flex: 1,
+          overflowY: "auto",
+          padding: "32px 44px",
+          maxWidth: 900,
+          width: "100%",
+          margin: "0 auto",
+          boxSizing: "border-box",
+        }}
+      >
         {loading ? (
-          <div style={{ color: "#8b919d", textAlign: "center", paddingTop: 80 }}>Caricamento…</div>
+          <div style={{ color: "#8b949e", textAlign: "center", paddingTop: 80, fontSize: 14 }}>
+            Caricamento…
+          </div>
         ) : (
           <>
-            {/* App bar chart */}
-            {summary.length > 0 && (
-              <section style={{ marginBottom: 32 }}>
-                <h2 style={sectionTitle}>Tempo per applicazione</h2>
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {summary.map((app, i) => (
-                    <div key={app.process_name} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                      <div style={{ width: 140, fontSize: 13, color: "#c0c7d4", textAlign: "right", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                        {app.app_name}
-                      </div>
-                      <div style={{ flex: 1, height: 10, background: "#1c2026", borderRadius: 3, overflow: "hidden" }}>
-                        <div
-                          style={{
-                            height: "100%",
-                            width: `${(app.total_secs / maxSecs) * 100}%`,
-                            background: APP_COLORS[i % APP_COLORS.length],
-                            borderRadius: 3,
-                            transition: "width 0.4s ease",
-                          }}
-                        />
-                      </div>
-                      <div style={{ width: 60, fontSize: 12, fontFamily: "Roboto Mono, monospace", color: "#8b919d" }}>
-                        {formatDuration(app.total_secs)}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            )}
-
-            {/* Timeline */}
-            <section style={{ marginBottom: 32 }}>
-              <h2 style={sectionTitle}>Timeline</h2>
-              <div style={{ position: "relative", marginTop: 8 }}>
-                {/* Hour labels */}
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                  {HOUR_LABELS.map((h) => (
-                    <span key={h} style={{ fontFamily: "Roboto Mono, monospace", fontSize: 10, color: "#414752", width: 0, textAlign: "center" }}>
-                      {h}
-                    </span>
-                  ))}
-                </div>
-                {/* Grid + blocks */}
-                <div
-                  style={{
-                    position: "relative", height: 60,
-                    background: "#181c22", borderRadius: 4,
-                    backgroundSize: `${100 / (TIMELINE_END_H - TIMELINE_START_H)}% 100%`,
-                    backgroundImage: "linear-gradient(to right, rgba(65,71,82,0.15) 1px, transparent 1px)",
-                    overflow: "hidden",
-                  }}
-                >
-                  {sessions
-                    .filter((s) => s.end_time && s.duration)
-                    .map((s) => (
-                      <div
-                        key={s.id}
-                        title={`${s.app_name}${s.task_name ? ` — ${s.task_name}` : ""}\n${formatDuration(s.duration!)}`}
-                        style={{
-                          position: "absolute",
-                          left: `${timeToPercent(s.start_time)}%`,
-                          width: `${durationToPercent(s.duration!)}%`,
-                          top: 8, bottom: 8,
-                          background: appColorMap[s.app_name] ?? "#58a6ff",
-                          borderRadius: 3,
-                          opacity: 0.85,
-                          display: "flex", alignItems: "center",
-                          padding: "0 6px", overflow: "hidden",
-                        }}
-                      >
-                        <span style={{ fontSize: 10, fontWeight: 600, color: "#001c38", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {s.app_name}
-                        </span>
-                      </div>
-                    ))}
-                  {sessions.length === 0 && (
-                    <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#414752", fontSize: 12 }}>
-                      Nessuna sessione registrata per questo giorno
-                    </div>
-                  )}
-                </div>
+            {/* ── Hero: Date + Big Timer ── */}
+            <section style={{ marginBottom: 36 }}>
+              <p style={{
+                fontSize: 12,
+                fontWeight: 500,
+                color: "#aaabb0",
+                fontFamily: "'Inter', sans-serif",
+                letterSpacing: "0.05em",
+                textTransform: "uppercase",
+                marginBottom: 6,
+              }}>
+                {new Date(date + "T12:00:00").toLocaleDateString("en-US", {
+                  weekday: "long", month: "long", day: "numeric"
+                })}
+              </p>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 16 }}>
+                <h2 style={{
+                  fontFamily: "'Inter', sans-serif",
+                  fontSize: 64,
+                  fontWeight: 800,
+                  color: "#f6f6fc",
+                  letterSpacing: "-0.04em",
+                  lineHeight: 1,
+                  margin: 0,
+                  fontVariantNumeric: "tabular-nums",
+                }}>
+                  {fmtClock(totalSecs)}
+                </h2>
+                {isToday && (
+                  <span style={{
+                    fontFamily: "Roboto Mono, monospace",
+                    fontSize: 13,
+                    fontWeight: 500,
+                    color: "#6affc9",
+                    letterSpacing: "0.1em",
+                    textTransform: "uppercase",
+                  }}>
+                    {liveSecs > 0 ? "● ACTIVE FLOW" : "ACTIVE FLOW"}
+                  </span>
+                )}
               </div>
             </section>
 
-            {/* Pending naming */}
-            {pending.length > 0 && (
-              <section>
-                <h2 style={sectionTitle}>
-                  <span className="material-symbols-outlined" style={{ fontSize: 16, verticalAlign: "middle", color: "#58a6ff", marginRight: 6 }}>label</span>
-                  Sessioni da nominare ({pending.length})
-                </h2>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {pending.map((s) => (
-                    <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 12, background: "#181c22", padding: "12px 16px", borderRadius: 6, border: "1px solid rgba(65,71,82,0.3)" }}>
+            {/* ── Application Distribution ── */}
+            <section style={{ marginBottom: 28 }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: 10,
+                }}
+              >
+                <span style={sectionLabel}>Application Distribution</span>
+                <span
+                  style={{
+                    fontFamily: "Roboto Mono, monospace",
+                    fontSize: 11,
+                    color: "#8b949e",
+                    letterSpacing: "0.04em",
+                  }}
+                >
+                  TOTALE REGISTRATO: {fmtClock(totalRecorded)}
+                </span>
+              </div>
+
+              {summary.length > 0 ? (
+                <>
+                  {/* Stacked proportional bar */}
+                  <div
+                    style={{
+                      display: "flex",
+                      height: 8,
+                      borderRadius: 4,
+                      overflow: "hidden",
+                      gap: 2,
+                      marginBottom: 14,
+                    }}
+                  >
+                    {summary.map((app) => (
                       <div
-                        style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, background: appColorMap[s.app_name] ?? "#58a6ff" }}
-                      />
-                      <div style={{ minWidth: 120 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: "#f0f6fc" }}>{s.app_name}</div>
-                        <div style={{ fontSize: 11, color: "#8b919d", fontFamily: "Roboto Mono, monospace" }}>
-                          {s.duration ? formatDuration(s.duration) : "—"}
-                        </div>
-                      </div>
-                      <input
-                        type="text"
-                        placeholder="Nome task…"
-                        value={naming[s.id] ?? ""}
-                        onChange={(e) => setNaming((prev) => ({ ...prev, [s.id]: e.target.value }))}
-                        onKeyDown={(e) => e.key === "Enter" && confirmName(s.id)}
+                        key={app.process_name}
+                        title={`${app.app_name}: ${fmtDuration(app.total_secs)}`}
                         style={{
-                          flex: 1, background: "#10141a", border: "1px solid #414752",
-                          borderRadius: 4, padding: "6px 10px", color: "#dfe2eb",
-                          fontSize: 12, outline: "none",
+                          flex: app.total_secs,
+                          background: appColor(app.app_name),
+                          borderRadius: 2,
+                          minWidth: 2,
                         }}
                       />
-                      <button onClick={() => confirmName(s.id)} style={confirmBtnStyle}>Conferma</button>
+                    ))}
+                  </div>
+
+                  {/* Per-app rows */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                    {summary.map((app) => (
+                      <div
+                        key={app.process_name}
+                        style={{ display: "flex", alignItems: "center", gap: 10 }}
+                      >
+                        <div
+                          style={{
+                            width: 8, height: 8, borderRadius: 2,
+                            background: appColor(app.app_name), flexShrink: 0,
+                          }}
+                        />
+                        <span
+                          style={{
+                            fontSize: 12, color: "#c9d1d9", flex: "0 0 140px",
+                            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                          }}
+                        >
+                          {app.app_name}
+                        </span>
+                        <div
+                          style={{
+                            flex: 1, height: 4,
+                            background: "rgba(255,255,255,0.05)",
+                            borderRadius: 2, overflow: "hidden",
+                          }}
+                        >
+                          <div
+                            style={{
+                              height: "100%",
+                              width: `${(app.total_secs / maxSecs) * 100}%`,
+                              background: appColor(app.app_name),
+                              borderRadius: 2,
+                              transition: "width 0.4s ease",
+                            }}
+                          />
+                        </div>
+                        <span
+                          style={{
+                            fontFamily: "Roboto Mono, monospace",
+                            fontSize: 11, color: "#8b949e",
+                            width: 60, textAlign: "right", flexShrink: 0,
+                          }}
+                        >
+                          {fmtDuration(app.total_secs)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Timeline ruler */}
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      marginTop: 16,
+                      paddingLeft: 158,
+                    }}
+                  >
+                    {["08:00", "10:00", "12:00", "14:00", "16:00", "18:00"].map((t) => (
+                      <span
+                        key={t}
+                        style={{
+                          fontSize: 10,
+                          fontFamily: "Roboto Mono, monospace",
+                          color: "rgba(139,148,158,0.45)",
+                        }}
+                      >
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div
+                  style={{
+                    height: 52,
+                    background: "#161b22",
+                    borderRadius: 8,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "#484f58",
+                    fontSize: 12,
+                    border: "1px solid rgba(255,255,255,0.05)",
+                  }}
+                >
+                  Nessuna attività registrata
+                </div>
+              )}
+            </section>
+
+            {/* ── Session list ── */}
+            <section style={{ marginBottom: 24 }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: 10,
+                }}
+              >
+                <span style={sectionLabel}>
+                  Sessioni{sessions.length > 0 ? ` (${sessions.length})` : ""}
+                </span>
+                {selected.size > 0 && (
+                  <span style={{ fontSize: 11, color: "#8b949e" }}>
+                    {selected.size} selezionat{selected.size > 1 ? "e" : "a"}
+                  </span>
+                )}
+              </div>
+
+              {sessions.length === 0 ? (
+                <div
+                  style={{
+                    textAlign: "center",
+                    paddingTop: 52,
+                    paddingBottom: 52,
+                    color: "#484f58",
+                  }}
+                >
+                  <span
+                    className="material-symbols-outlined"
+                    style={{ fontSize: 40, display: "block", marginBottom: 8 }}
+                  >
+                    timeline
+                  </span>
+                  <span style={{ fontSize: 13 }}>
+                    Nessuna sessione per {isToday ? "oggi" : date}
+                  </span>
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {sessions.map((s) => {
+                    const isSelected = selected.has(s.id);
+                    const isEditing = editingId === s.id;
+                    const linkedWs = workSessions.find((w) => w.id === s.work_session_id);
+
+                    return (
+                      <div
+                        key={s.id}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 10,
+                          padding: "10px 14px",
+                          background: isSelected ? "rgba(88,166,255,0.07)" : "#161b22",
+                          borderRadius: 8,
+                          border: isSelected
+                            ? "1px solid rgba(88,166,255,0.28)"
+                            : "1px solid rgba(255,255,255,0.06)",
+                          transition: "background 0.12s, border-color 0.12s",
+                        }}
+                      >
+                        {/* Checkbox */}
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleSelect(s.id)}
+                          style={{
+                            width: 14, height: 14, cursor: "pointer",
+                            accentColor: "#58a6ff", flexShrink: 0,
+                          }}
+                        />
+
+                        {/* App icon */}
+                        <div
+                          style={{
+                            width: 30, height: 30, borderRadius: 7,
+                            background: `${appColor(s.app_name)}18`,
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            flexShrink: 0,
+                          }}
+                        >
+                          <span
+                            className="material-symbols-outlined"
+                            style={{ fontSize: 16, color: appColor(s.app_name) }}
+                          >
+                            {appIcon(s.app_name)}
+                          </span>
+                        </div>
+
+                        {/* Main info */}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 6,
+                              marginBottom: isEditing || s.task_name ? 3 : 0,
+                            }}
+                          >
+                            <span
+                              style={{
+                                fontSize: 13, fontWeight: 600, color: "#e6edf3",
+                                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                              }}
+                            >
+                              {s.app_name}
+                            </span>
+                            {s.status === "confirmed" && (
+                              <span
+                                className="material-symbols-outlined"
+                                style={{ fontSize: 13, color: "#3fb950", flexShrink: 0 }}
+                              >
+                                check_circle
+                              </span>
+                            )}
+                            {s.status === "active" && (
+                              <span
+                                style={{
+                                  fontSize: 9, padding: "1px 5px", borderRadius: 8,
+                                  background: "rgba(63,185,80,0.15)", color: "#3fb950",
+                                  border: "1px solid rgba(63,185,80,0.3)",
+                                  fontWeight: 700, letterSpacing: "0.06em",
+                                  textTransform: "uppercase", flexShrink: 0,
+                                }}
+                              >
+                                LIVE
+                              </span>
+                            )}
+                            {linkedWs && (
+                              <span
+                                style={{
+                                  fontSize: 10, padding: "1px 7px", borderRadius: 10,
+                                  background: `${linkedWs.color}22`,
+                                  color: linkedWs.color,
+                                  border: `1px solid ${linkedWs.color}44`,
+                                  fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0,
+                                }}
+                              >
+                                {linkedWs.name}
+                              </span>
+                            )}
+                          </div>
+
+                          {isEditing ? (
+                            <div style={{ display: "flex", gap: 6, marginTop: 2 }}>
+                              <input
+                                autoFocus
+                                value={editName}
+                                onChange={(e) => setEditName(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") handleRename(s.id);
+                                  if (e.key === "Escape") { setEditingId(null); setEditName(""); }
+                                }}
+                                placeholder="Nome task…"
+                                style={inlineInput}
+                              />
+                              <button
+                                onClick={() => handleRename(s.id)}
+                                style={pillBtn("#3fb950", "#0d1117")}
+                              >
+                                Salva
+                              </button>
+                              <button
+                                onClick={() => { setEditingId(null); setEditName(""); }}
+                                style={pillBtn("rgba(255,255,255,0.08)", "#8b949e")}
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ) : (
+                            s.task_name && (
+                              <span style={{ fontSize: 11, color: "#8b949e", fontStyle: "italic" }}>
+                                {s.task_name}
+                              </span>
+                            )
+                          )}
+                        </div>
+
+                        {/* Time range + duration */}
+                        <div style={{ textAlign: "right", flexShrink: 0 }}>
+                          <div
+                            style={{
+                              fontSize: 11,
+                              fontFamily: "Roboto Mono, monospace",
+                              color: "#8b949e",
+                              marginBottom: 2,
+                            }}
+                          >
+                            {fmtTime(s.start_time)}
+                            {s.end_time ? ` – ${fmtTime(s.end_time)}` : " →"}
+                          </div>
+                          <div
+                            style={{
+                              fontSize: 12,
+                              fontFamily: "Roboto Mono, monospace",
+                              color: "#58a6ff",
+                              fontWeight: 700,
+                            }}
+                          >
+                            {s.duration ? fmtDuration(s.duration) : "…"}
+                          </div>
+                        </div>
+
+                        {/* Edit button */}
+                        <button
+                          onClick={() => { setEditingId(s.id); setEditName(s.task_name ?? ""); }}
+                          title="Aggiungi / modifica task name"
+                          style={{
+                            background: "none", border: "none",
+                            color: "#484f58", cursor: "pointer",
+                            padding: 4, borderRadius: 4,
+                            display: "flex", alignItems: "center", flexShrink: 0,
+                            transition: "color 0.12s",
+                          }}
+                          onMouseEnter={(e) => (e.currentTarget.style.color = "#8b949e")}
+                          onMouseLeave={(e) => (e.currentTarget.style.color = "#484f58")}
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: 15 }}>
+                            edit
+                          </span>
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+
+            {/* ── Work Sessions Panel ── */}
+            {workSessions.length > 0 && (
+              <section style={{ marginBottom: 80 }}>
+                <span style={{ ...sectionLabel, display: "block", marginBottom: 10 }}>
+                  Work Sessions
+                </span>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {workSessions.map((ws) => (
+                    <div
+                      key={ws.id}
+                      style={{
+                        padding: "12px 16px",
+                        background: "#161b22",
+                        borderRadius: 8,
+                        border: `1px solid ${ws.color}2a`,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 12,
+                      }}
+                    >
+                      {/* Color dot */}
+                      <div
+                        style={{
+                          width: 10, height: 10, borderRadius: "50%",
+                          background: ws.color, flexShrink: 0,
+                        }}
+                      />
+
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div
+                          style={{
+                            fontSize: 13, fontWeight: 600, color: "#e6edf3", marginBottom: 2,
+                            display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+                          }}
+                        >
+                          {ws.name}
+                          {ws.project_name && (
+                            <span style={{
+                              padding: '2px 8px',
+                              borderRadius: 4,
+                              background: `${ws.project_color ?? '#6affc9'}22`,
+                              border: `1px solid ${ws.project_color ?? '#6affc9'}44`,
+                              color: ws.project_color ?? '#6affc9',
+                              fontSize: 11,
+                              fontWeight: 500,
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 4,
+                            }}>
+                              <span style={{ width: 6, height: 6, borderRadius: '50%', background: ws.project_color ?? '#6affc9', display: 'inline-block' }} />
+                              {ws.project_name}
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: 11, color: "#8b949e" }}>
+                          {ws.app_names || "—"}{" · "}
+                          <span
+                            style={{ fontFamily: "Roboto Mono, monospace", color: ws.color }}
+                          >
+                            {fmtDuration(ws.total_secs)}
+                          </span>
+                          {" · "}
+                          {ws.session_count} session{ws.session_count !== 1 ? "i" : "e"}
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => handleDeleteWorkSession(ws.id)}
+                        title="Elimina work session"
+                        style={{
+                          background: "none", border: "none", color: "#484f58",
+                          cursor: "pointer", padding: 4, borderRadius: 4,
+                          display: "flex", alignItems: "center",
+                          transition: "color 0.12s",
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.color = "#f85149")}
+                        onMouseLeave={(e) => (e.currentTarget.style.color = "#484f58")}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+                          delete
+                        </span>
+                      </button>
                     </div>
                   ))}
                 </div>
               </section>
             )}
 
-            {summary.length === 0 && sessions.length === 0 && (
-              <div style={{ textAlign: "center", paddingTop: 80, color: "#414752" }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 48, display: "block", marginBottom: 12 }}>timeline</span>
-                Nessuna attività tracciata per {isToday ? "oggi" : date}.<br />
-                <span style={{ fontSize: 13, color: "#414752" }}>Assicurati di avere app nella whitelist con tracking abilitato.</span>
+            {/* ── Empty state ── */}
+            {sessions.length === 0 && summary.length === 0 && (
+              <div style={{ textAlign: "center", paddingTop: 64, color: "#484f58" }}>
+                <span
+                  className="material-symbols-outlined"
+                  style={{ fontSize: 48, display: "block", marginBottom: 12 }}
+                >
+                  query_stats
+                </span>
+                <div style={{ fontSize: 13, marginBottom: 6 }}>
+                  Nessuna attività tracciata per {isToday ? "oggi" : date}.
+                </div>
+                <div style={{ fontSize: 12 }}>
+                  Abilita le app nella whitelist per iniziare il tracking.
+                </div>
               </div>
             )}
           </>
         )}
       </div>
+
+      {/* ── Floating "Group Selected" button ── */}
+      {selected.size >= 1 && !showGroupDialog && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: 28,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 100,
+          }}
+        >
+          <button
+            onClick={() => setShowGroupDialog(true)}
+            style={{
+              background: "#58a6ff",
+              color: "#0d1117",
+              border: "none",
+              borderRadius: 22,
+              padding: "11px 26px",
+              fontWeight: 700,
+              fontSize: 13,
+              cursor: "pointer",
+              boxShadow: "0 4px 24px rgba(88,166,255,0.45)",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              letterSpacing: "0.01em",
+            }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
+              folder_special
+            </span>
+            Raggruppa {selected.size} session{selected.size > 1 ? "i" : "e"}
+          </button>
+        </div>
+      )}
+
+      {/* ── Group Dialog ── */}
+      {showGroupDialog && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.72)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 200,
+          }}
+          onClick={(e) => { if (e.target === e.currentTarget) setShowGroupDialog(false); }}
+        >
+          <div
+            style={{
+              background: "#161b22",
+              border: "1px solid rgba(255,255,255,0.1)",
+              borderRadius: 14,
+              padding: "28px 32px",
+              width: 400,
+              boxShadow: "0 20px 60px rgba(0,0,0,0.7)",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+              <span
+                className="material-symbols-outlined"
+                style={{ fontSize: 22, color: "#58a6ff" }}
+              >
+                folder_special
+              </span>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#e6edf3" }}>
+                Crea Work Session
+              </h3>
+            </div>
+            <p style={{ margin: "0 0 20px", fontSize: 12, color: "#8b949e", lineHeight: 1.5 }}>
+              Raggruppa {selected.size} session{selected.size > 1 ? "i" : "e"} in un blocco
+              di lavoro con nome e colore.
+            </p>
+
+            <input
+              autoFocus
+              value={groupName}
+              onChange={(e) => setGroupName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleCreateWorkSession();
+                if (e.key === "Escape") setShowGroupDialog(false);
+              }}
+              placeholder="es. Sprint Planning, Deep Work…"
+              style={{ ...inlineInput, width: "100%", boxSizing: "border-box" }}
+            />
+
+            {/* ── Project selector ── */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
+              <span style={{ fontSize: 11, color: '#74757a', fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                Project (optional)
+              </span>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {/* "None" chip */}
+                <button
+                  onClick={() => setSelectedProject(null)}
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: 4,
+                    border: `1px solid ${selectedProject === null ? '#6affc9' : 'rgba(255,255,255,0.1)'}`,
+                    background: selectedProject === null ? 'rgba(106,255,201,0.1)' : 'transparent',
+                    color: selectedProject === null ? '#6affc9' : '#74757a',
+                    fontSize: 12,
+                    cursor: 'pointer',
+                  }}
+                >
+                  None
+                </button>
+
+                {/* Existing project chips */}
+                {projects.map(p => (
+                  <button
+                    key={p.id}
+                    onClick={() => setSelectedProject(p.id)}
+                    style={{
+                      padding: '4px 10px',
+                      borderRadius: 4,
+                      border: `1px solid ${selectedProject === p.id ? p.color : 'rgba(255,255,255,0.1)'}`,
+                      background: selectedProject === p.id ? `${p.color}22` : 'transparent',
+                      color: selectedProject === p.id ? p.color : '#aaabb0',
+                      fontSize: 12,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                    }}
+                  >
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: p.color, display: 'inline-block' }} />
+                    {p.name}
+                  </button>
+                ))}
+
+                {/* New project inline */}
+                {!showNewProject ? (
+                  <button
+                    onClick={() => setShowNewProject(true)}
+                    style={{
+                      padding: '4px 10px',
+                      borderRadius: 4,
+                      border: '1px dashed rgba(255,255,255,0.2)',
+                      background: 'transparent',
+                      color: '#74757a',
+                      fontSize: 12,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    + New project
+                  </button>
+                ) : (
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <input
+                      autoFocus
+                      value={newProjectName}
+                      onChange={e => setNewProjectName(e.target.value)}
+                      onKeyDown={async e => {
+                        if (e.key === 'Enter' && newProjectName.trim()) {
+                          const p = await createProject(newProjectName.trim());
+                          setProjects(prev => [...prev, p]);
+                          setSelectedProject(p.id);
+                          setNewProjectName('');
+                          setShowNewProject(false);
+                        }
+                        if (e.key === 'Escape') { setShowNewProject(false); setNewProjectName(''); }
+                      }}
+                      placeholder="Project name…"
+                      style={{
+                        background: '#23262c',
+                        border: '1px solid rgba(106,255,201,0.3)',
+                        borderRadius: 4,
+                        color: '#f6f6fc',
+                        fontSize: 12,
+                        padding: '4px 8px',
+                        outline: 'none',
+                        width: 140,
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                gap: 10,
+                marginTop: 16,
+                justifyContent: "flex-end",
+              }}
+            >
+              <button
+                onClick={() => setShowGroupDialog(false)}
+                style={pillBtn("rgba(255,255,255,0.07)", "#8b949e")}
+              >
+                Annulla
+              </button>
+              <button
+                onClick={handleCreateWorkSession}
+                disabled={!groupName.trim()}
+                style={{
+                  ...pillBtn("#58a6ff", "#0d1117"),
+                  opacity: groupName.trim() ? 1 : 0.4,
+                  cursor: groupName.trim() ? "pointer" : "not-allowed",
+                }}
+              >
+                Crea
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pulse animation for LIVE indicator */}
+      <style>{`
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.3; }
+        }
+      `}</style>
     </div>
   );
 }
 
-const sectionTitle: React.CSSProperties = {
-  fontSize: 11,
+// ─── Shared style constants ───────────────────────────────────────────────────
+
+const sectionLabel: React.CSSProperties = {
+  fontSize: 10,
   fontFamily: "Roboto Mono, monospace",
   textTransform: "uppercase",
-  letterSpacing: "0.15em",
-  color: "#8b919d",
-  marginBottom: 14,
+  letterSpacing: "0.13em",
+  color: "#8b949e",
+  fontWeight: 700,
 };
 
-const btnStyle: React.CSSProperties = {
-  background: "none", border: "none", color: "#c0c7d4",
-  cursor: "pointer", padding: 4, borderRadius: 4,
-  display: "flex", alignItems: "center",
+const navBtnStyle: React.CSSProperties = {
+  background: "none",
+  border: "none",
+  color: "#8b949e",
+  cursor: "pointer",
+  padding: 4,
+  borderRadius: 4,
+  display: "flex",
+  alignItems: "center",
 };
 
-const confirmBtnStyle: React.CSSProperties = {
-  background: "#58a6ff", color: "#001c38", border: "none",
-  borderRadius: 4, padding: "6px 14px", fontWeight: 700,
-  fontSize: 11, cursor: "pointer", letterSpacing: "0.05em",
-  textTransform: "uppercase", whiteSpace: "nowrap",
+const inlineInput: React.CSSProperties = {
+  background: "#0d1117",
+  border: "1px solid rgba(255,255,255,0.1)",
+  borderRadius: 6,
+  padding: "7px 11px",
+  color: "#e6edf3",
+  fontSize: 13,
+  outline: "none",
 };
+
+function pillBtn(bg: string, color: string): React.CSSProperties {
+  return {
+    background: bg,
+    color,
+    border: "none",
+    borderRadius: 6,
+    padding: "7px 16px",
+    fontWeight: 600,
+    fontSize: 12,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  };
+}
