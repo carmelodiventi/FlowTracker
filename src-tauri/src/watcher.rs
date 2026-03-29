@@ -70,7 +70,7 @@ fn poll_loop(db: SharedDb, app: AppHandle) {
     // This happens when the process is killed/restarted without a clean shutdown.
     {
         let conn = db.lock().unwrap_or_else(|e| e.into_inner());
-        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let now = iso_now();
         let affected = conn.execute(
             "UPDATE sessions
              SET end_time = ?1,
@@ -147,6 +147,7 @@ fn poll_loop(db: SharedDb, app: AppHandle) {
                                         sid, process
                                     );
                                     current_session_id = Some(sid);
+                                    let _ = app.emit("flow:session-opened", sid);
                                 }
                                 Err(e) => eprintln!("[FlowTracker] open_session failed: {}", e),
                             }

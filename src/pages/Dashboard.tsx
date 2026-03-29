@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo, useRef, useCallback } from "react";
+import { listen } from "@tauri-apps/api/event";
 import {
   dailySummary,
   listSessionsForDate,
@@ -123,6 +124,25 @@ export default function Dashboard() {
     setSelected(new Set());
   }, [load]);
 
+  // ── Auto-refresh: listen to session events + poll every 30s (today only) ────
+
+  useEffect(() => {
+    if (!isToday) return;
+
+    // Reload whenever the watcher opens or closes/merges a session
+    const unlistenClosed = listen("flow:session-closed", () => load());
+    const unlistenOpened = listen("flow:session-opened", () => load());
+
+    // Also poll every 30s to catch new active sessions opening
+    const pollId = setInterval(load, 30_000);
+
+    return () => {
+      unlistenClosed.then((fn) => fn());
+      unlistenOpened.then((fn) => fn());
+      clearInterval(pollId);
+    };
+  }, [isToday, load]);
+
   // ── Live timer (today only) ─────────────────────────────────────────────────
 
   useEffect(() => {
@@ -133,7 +153,10 @@ export default function Dashboard() {
 
     const tick = () => {
       setSessions((prev) => {
-        const active = prev.find((s) => s.status === "active");
+        // Only the most recent active session counts as live
+        const active = prev
+          .filter((s) => s.status === "active")
+          .sort((a, b) => b.start_time.localeCompare(a.start_time))[0];
         if (active) {
           const started = new Date(
             active.start_time.endsWith("Z") ? active.start_time : active.start_time + "Z"
@@ -651,7 +674,7 @@ export default function Dashboard() {
                                 check_circle
                               </span>
                             )}
-                            {s.status === "active" && (
+                            {s.id === activeSession?.id && (
                               <span
                                 style={{
                                   fontSize: 9, padding: "1px 5px", borderRadius: 8,
