@@ -771,3 +771,20 @@ pub fn list_task_names(state: State<DbState>) -> Result<Vec<String>, String> {
         .collect();
     Ok(names)
 }
+
+/// Rename all sessions sharing `old_name` as task_name to `new_name`.
+/// This renames the whole group in one shot.
+#[tauri::command]
+pub fn rename_task_group(
+    old_name: String,
+    new_name: String,
+    state: State<DbState>,
+) -> Result<(), String> {
+    let conn = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    conn.execute(
+        "UPDATE sessions SET task_name = ?1 WHERE task_name = ?2",
+        rusqlite::params![new_name.trim(), old_name],
+    )
+    .map(|_| ())
+    .map_err(|e| e.to_string())
+}
