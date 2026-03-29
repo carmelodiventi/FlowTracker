@@ -444,3 +444,39 @@ pub fn set_setting(
     .map_err(|e| e.to_string())?;
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Accessibility permission
+// ---------------------------------------------------------------------------
+
+/// Returns `true` if FlowTracker has been granted Accessibility permission.
+/// Uses the macOS `AXIsProcessTrusted()` API (ApplicationServices framework).
+/// On non-macOS platforms always returns `true`.
+#[tauri::command]
+pub fn check_accessibility() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        #[link(name = "ApplicationServices", kind = "framework")]
+        extern "C" {
+            fn AXIsProcessTrusted() -> bool;
+        }
+        unsafe { AXIsProcessTrusted() }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
+}
+
+/// Opens the macOS Accessibility pane in System Settings so the user can
+/// grant permission without needing to navigate there manually.
+#[tauri::command]
+pub fn open_accessibility_settings() {
+    #[cfg(target_os = "macos")]
+    {
+        // Works on macOS 13+ (Ventura and later, including macOS 26 Tahoe).
+        let _ = std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+            .spawn();
+    }
+}

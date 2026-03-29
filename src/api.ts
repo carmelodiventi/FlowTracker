@@ -89,3 +89,13 @@ export const getSetting = (key: string): Promise<string> =>
 
 export const setSetting = (key: string, value: string): Promise<void> =>
   invoke("set_setting", { key, value });
+
+// ---------------------------------------------------------------------------
+// Accessibility
+// ---------------------------------------------------------------------------
+
+export const checkAccessibility = (): Promise<boolean> =>
+  invoke("check_accessibility");
+
+export const openAccessibilitySettings = (): Promise<void> =>
+  invoke("open_accessibility_settings");

@@ -64,6 +64,8 @@ pub fn run() {
             commands::daily_summary,
             commands::get_setting,
             commands::set_setting,
+            commands::check_accessibility,
+            commands::open_accessibility_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
