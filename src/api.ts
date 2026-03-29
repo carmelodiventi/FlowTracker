@@ -175,6 +175,9 @@ export const createWorkSession = (
 export const listWorkSessions = (date: string): Promise<WorkSession[]> =>
   invoke("list_work_sessions", { date });
 
+export const listAllWorkSessions = (): Promise<WorkSession[]> =>
+  invoke("list_all_work_sessions");
+
 export const updateWorkSession = (id: string, name: string): Promise<void> =>
   invoke("update_work_session", { id, name });
 

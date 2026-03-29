@@ -622,6 +622,28 @@ pub async fn list_work_sessions(
 }
 
 #[tauri::command]
+pub async fn list_all_work_sessions(
+    state: State<'_, MongoState>,
+) -> Result<Vec<WorkSession>, String> {
+    let db  = &state.db;
+    let did = &state.user_id;
+    let ws_col = db.collection::<Document>("work_sessions");
+    let mut cursor = ws_col
+        .find(doc! { "user_id": did })
+        .sort(doc! { "start_time": 1_i32 })
+        .await.map_err(|e| e.to_string())?;
+    let mut result = vec![];
+    while cursor.advance().await.map_err(|e| e.to_string())? {
+        let d = cursor.deserialize_current().map_err(|e| e.to_string())?;
+        let ws_id = d.get_object_id("_id").map(|o| o.to_hex()).unwrap_or_default();
+        if let Ok(ws) = fetch_work_session_by_id(db, did, ObjectId::parse_str(&ws_id).unwrap()).await {
+            result.push(ws);
+        }
+    }
+    Ok(result)
+}
+
+#[tauri::command]
 pub async fn update_work_session(
     state: State<'_, MongoState>, id: String, name: String,
 ) -> Result<(), String> {

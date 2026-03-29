@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
-import { getSessionsForExport, Session } from "../api";
+import { getSessionsForExport, listAllWorkSessions, listProjectsDetail, Session, WorkSession, ProjectDetail } from "../api";
 
 // ─── Design tokens (matching Stitch/dashboard palette) ────────────────────────
 const C = {
@@ -57,6 +57,46 @@ export default function ExportModal({ onClose }: Props) {
   const [error,      setError]      = useState<string | null>(null);
   const [hovered,    setHovered]    = useState<Preset | null>(null);
 
+  // Filter state
+  const [allWorkSessions, setAllWorkSessions] = useState<WorkSession[]>([]);
+  const [projects,        setProjects]        = useState<ProjectDetail[]>([]);
+  const [filterProject,   setFilterProject]   = useState<string>(""); // project id or ""
+  const [filterClient,    setFilterClient]    = useState<string>(""); // client id or ""
+
+  useEffect(() => {
+    listAllWorkSessions().then(setAllWorkSessions).catch(console.error);
+    listProjectsDetail().then(setProjects).catch(console.error);
+  }, []);
+
+  // Derive unique clients from projects
+  const clients = Array.from(
+    new Map(
+      projects
+        .filter(p => p.client_id && p.client_name)
+        .map(p => [p.client_id!, { id: p.client_id!, name: p.client_name! }])
+    ).values()
+  );
+
+  // Projects filtered by selected client
+  const visibleProjects = filterClient
+    ? projects.filter(p => p.client_id === filterClient)
+    : projects;
+
+  // Build wsId → project mapping
+  const wsProjectMap = new Map<string, { project_id: string | null; project_name: string | null; client_id: string | null; client_name: string | null }>();
+  for (const ws of allWorkSessions) {
+    wsProjectMap.set(ws.id, {
+      project_id: ws.project_id,
+      project_name: ws.project_name,
+      client_id: ws.project_id
+        ? (projects.find(p => p.id === ws.project_id)?.client_id ?? null)
+        : null,
+      client_name: ws.project_id
+        ? (projects.find(p => p.id === ws.project_id)?.client_name ?? null)
+        : null,
+    });
+  }
+
   function getRange(): [string, string] {
     if (preset === "week")  return weekRange();
     if (preset === "month") return monthRange();
@@ -64,26 +104,43 @@ export default function ExportModal({ onClose }: Props) {
   }
   const [from, to] = getRange();
 
+  // Active filter labels for filename
+  const projectLabel = filterProject ? (projects.find(p => p.id === filterProject)?.name ?? "") : "";
+  const clientLabel  = filterClient  ? (clients.find(c => c.id === filterClient)?.name ?? "") : "";
+  const filterSuffix = [clientLabel, projectLabel].filter(Boolean).join("-").replace(/\s+/g, "_");
+  const filename = filterSuffix
+    ? `flow-tracker-${filterSuffix}-${from}-to-${to}.pdf`
+    : `flow-tracker-${from}-to-${to}.pdf`;
+
   async function handleExport() {
     setLoading(true); setError(null);
     try {
       const sessions = await getSessionsForExport(from, to);
-      const bytes = buildPDF(sessions, from, to);
 
-      // Show native Save As dialog
+      // Apply filters
+      const filtered = sessions.filter(s => {
+        if (!filterProject && !filterClient) return true;
+        if (!s.work_session_id) return false;
+        const meta = wsProjectMap.get(s.work_session_id);
+        if (!meta) return false;
+        if (filterProject && meta.project_id !== filterProject) return false;
+        if (filterClient  && meta.client_id  !== filterClient)  return false;
+        return true;
+      });
+
+      const bytes = buildPDF(filtered, from, to, projectLabel, clientLabel);
       const path = await save({
-        defaultPath: `flow-tracker-${from}-to-${to}.pdf`,
+        defaultPath: filename,
         filters: [{ name: "PDF Document", extensions: ["pdf"] }],
       });
-      if (!path) { setLoading(false); return; } // user cancelled
-
+      if (!path) { setLoading(false); return; }
       await writeFile(path, bytes);
       onClose();
     } catch (e) { setError(String(e)); }
     finally { setLoading(false); }
   }
 
-  function buildPDF(sessions: Session[], from: string, to: string): Uint8Array {
+  function buildPDF(sessions: Session[], from: string, to: string, projectLabel: string, clientLabel: string): Uint8Array {
     const groups = new Map<string, Session[]>();
     for (const s of sessions) {
       const key = s.task_name ?? "Unlabelled";
@@ -98,7 +155,13 @@ export default function ExportModal({ onClose }: Props) {
     y += 8;
     doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.setTextColor(100);
     doc.text(`Period: ${fmtDate(from + "T00:00:00")} – ${fmtDate(to + "T00:00:00")}`, W / 2, y, { align: "center" });
-    y += 12; doc.setTextColor(0);
+    y += 5;
+    if (clientLabel || projectLabel) {
+      const filterStr = [clientLabel && `Client: ${clientLabel}`, projectLabel && `Project: ${projectLabel}`].filter(Boolean).join("  |  ");
+      doc.text(filterStr, W / 2, y, { align: "center" });
+      y += 5;
+    }
+    y += 7; doc.setTextColor(0);
     let grand = 0;
     for (const [name, rows] of groups.entries()) {
       const total = rows.reduce((a, s) => a + (s.duration ?? 0), 0);
@@ -126,8 +189,36 @@ export default function ExportModal({ onClose }: Props) {
     doc.setFont("helvetica", "bold"); doc.setFontSize(11);
     doc.text("Total tracked time", 14, y);
     doc.text(fmtSecs(grand), W - 14, y, { align: "right" });
+
+    // ── Promo footer on every page ──────────────────────────────────────────
+    const totalPages = (doc as jsPDF & { internal: { getNumberOfPages: () => number } }).internal.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+      doc.setPage(i);
+      const pH = doc.internal.pageSize.getHeight();
+      doc.setDrawColor(220); doc.line(14, pH - 18, W - 14, pH - 18);
+      doc.setFont("helvetica", "italic"); doc.setFontSize(8); doc.setTextColor(150);
+      doc.text(
+        "Generated with Flow Tracker  ·  Available on the Mac App Store & Microsoft Store",
+        W / 2, pH - 11,
+        { align: "center" }
+      );
+    }
+
     return doc.output("arraybuffer") as unknown as Uint8Array;
   }
+
+  const selectStyle = {
+    background: "#10141a",
+    border: `1px solid ${C.outlineVar}`,
+    borderRadius: 4,
+    color: C.onSurface,
+    fontSize: 12,
+    padding: "6px 10px",
+    outline: "none",
+    width: "100%",
+    fontFamily: "Inter, sans-serif",
+    cursor: "pointer",
+  };
 
   function Card({
     id, label, sublabel, icon, children,
@@ -168,8 +259,6 @@ export default function ExportModal({ onClose }: Props) {
     );
   }
 
-  const filename = `flow-tracker-${from}-to-${to}.pdf`;
-
   return (
     <div
       onClick={onClose}
@@ -201,7 +290,8 @@ export default function ExportModal({ onClose }: Props) {
         </div>
 
         {/* Body */}
-        <div style={{ padding: "24px 32px", display: "flex", flexDirection: "column", gap: 24 }}>
+        <div style={{ padding: "24px 32px", display: "flex", flexDirection: "column", gap: 24, maxHeight: "70vh", overflowY: "auto" }}>
+          {/* Date range */}
           <div>
             <div style={{ fontFamily: "Roboto Mono, monospace", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", color: C.outline, marginBottom: 12 }}>
               Time Interval
@@ -241,10 +331,43 @@ export default function ExportModal({ onClose }: Props) {
             </div>
           </div>
 
+          {/* Filters */}
+          <div>
+            <div style={{ fontFamily: "Roboto Mono, monospace", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", color: C.outline, marginBottom: 12 }}>
+              Filters <span style={{ color: C.outlineVar }}>(optional)</span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              {/* Client filter */}
+              <div>
+                <label style={{ display: "block", fontSize: 11, color: C.onSurfaceVar, marginBottom: 4 }}>Client</label>
+                <select
+                  value={filterClient}
+                  onChange={e => { setFilterClient(e.target.value); setFilterProject(""); }}
+                  style={selectStyle}
+                >
+                  <option value="">All Clients</option>
+                  {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+              {/* Project filter */}
+              <div>
+                <label style={{ display: "block", fontSize: 11, color: C.onSurfaceVar, marginBottom: 4 }}>Project</label>
+                <select
+                  value={filterProject}
+                  onChange={e => setFilterProject(e.target.value)}
+                  style={selectStyle}
+                >
+                  <option value="">All Projects</option>
+                  {visibleProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
+            </div>
+          </div>
+
           {/* Filename hint */}
           <div style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 14px", background: C.surfaceLowest, borderRadius: 6, border: `1px solid ${C.outlineVar}0d` }}>
             <span className="material-symbols-outlined" style={{ fontSize: 18, color: C.primary, marginTop: 1 }}>info</span>
-            <span style={{ fontFamily: "Roboto Mono, monospace", fontSize: 11, color: C.onSurfaceVar, lineHeight: 1.6 }}>
+            <span style={{ fontFamily: "Roboto Mono, monospace", fontSize: 11, color: C.onSurfaceVar, lineHeight: 1.6, wordBreak: "break-all" }}>
               File will be saved as <span style={{ color: C.primary }}>{filename}</span>
             </span>
           </div>

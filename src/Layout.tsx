@@ -1,7 +1,7 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { useEffect, useState, useCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { nameSession } from "./api";
+import { nameSession, listProjects, createWorkSession, assignWorkSessionProject, Project } from "./api";
 
 interface SessionClosedPayload {
   session_id: string;
@@ -14,6 +14,8 @@ interface NamingToast {
   app_name: string;
   duration_secs: number;
   input: string;
+  project_id: string | null;
+  showProjects: boolean;
 }
 
 const NAV = [
@@ -31,25 +33,46 @@ function formatDuration(secs: number): string {
 }
 
 export default function Layout() {
-  const [toasts, setToasts] = useState<NamingToast[]>([]);
+  const [toasts,   setToasts]   = useState<NamingToast[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+
+  useEffect(() => {
+    listProjects().then(setProjects).catch(console.error);
+  }, []);
 
   useEffect(() => {
     const unlisten = listen<SessionClosedPayload>("flow:session-closed", ({ payload }) => {
       if (payload.duration_secs < 60) return;
-      setToasts((prev) => [...prev.slice(-4), { ...payload, input: "" }]);
+      setToasts((prev) => [...prev.slice(-4), { ...payload, input: "", project_id: null, showProjects: false }]);
     });
     return () => { unlisten.then((f) => f()); };
   }, []);
 
   const confirmName = useCallback(async (toast: NamingToast) => {
-    if (toast.input.trim()) {
-      await nameSession(toast.session_id, toast.input.trim()).catch(console.error);
+    const name = toast.input.trim();
+    try {
+      if (name) {
+        // Create a work session and optionally assign a project
+        const ws = await createWorkSession(name, [toast.session_id]);
+        if (toast.project_id) {
+          await assignWorkSessionProject(ws.id, toast.project_id);
+        }
+      } else {
+        // Just tag the session with a task name if no work session
+        await nameSession(toast.session_id, name).catch(() => {});
+      }
+    } catch (e) {
+      console.error("[toast] confirm error:", e);
     }
     setToasts((prev) => prev.filter((t) => t.session_id !== toast.session_id));
   }, []);
 
   const dismissToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.session_id !== id));
+  }, []);
+
+  const updateToast = useCallback((session_id: string, patch: Partial<NamingToast>) => {
+    setToasts((prev) => prev.map((t) => t.session_id === session_id ? { ...t, ...patch } : t));
   }, []);
 
   return (
@@ -151,13 +174,14 @@ export default function Layout() {
 
       {/* Session naming toasts */}
       {toasts.length > 0 && (
-        <div style={{ position: "fixed", bottom: 24, right: 24, display: "flex", flexDirection: "column", gap: 10, zIndex: 100, width: 340 }}>
+        <div style={{ position: "fixed", bottom: 24, right: 24, display: "flex", flexDirection: "column", gap: 10, zIndex: 100, width: 360 }}>
           {toasts.map((toast) => (
             <div
               key={toast.session_id}
               style={{ background: "#1c2026", border: "1px solid rgba(65,71,82,0.5)", borderLeft: "3px solid #58a6ff", borderRadius: 6, padding: "14px 16px" }}
             >
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+              {/* Title row */}
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
                 <div>
                   <div style={{ fontWeight: 600, color: "#f0f6fc", fontSize: 13 }}>{toast.app_name}</div>
                   <div style={{ fontSize: 11, color: "#8b919d", fontFamily: "Roboto Mono, monospace" }}>
@@ -166,12 +190,14 @@ export default function Layout() {
                 </div>
                 <button onClick={() => dismissToast(toast.session_id)} style={{ color: "#8b919d", background: "none", border: "none", cursor: "pointer", fontSize: 20, lineHeight: 1, padding: 0 }}>×</button>
               </div>
-              <div style={{ display: "flex", gap: 8 }}>
+
+              {/* Task name input + OK */}
+              <div style={{ display: "flex", gap: 8, marginBottom: projects.length > 0 ? 8 : 0 }}>
                 <input
                   type="text"
                   placeholder="e.g. Fix auth bug…"
                   value={toast.input}
-                  onChange={(e) => setToasts((prev) => prev.map((t) => t.session_id === toast.session_id ? { ...t, input: e.target.value } : t))}
+                  onChange={(e) => updateToast(toast.session_id, { input: e.target.value })}
                   onKeyDown={(e) => e.key === "Enter" && confirmName(toast)}
                   style={{ flex: 1, background: "#10141a", border: "1px solid #414752", borderRadius: 4, padding: "6px 10px", color: "#dfe2eb", fontSize: 12, outline: "none" }}
                 />
@@ -182,6 +208,55 @@ export default function Layout() {
                   OK
                 </button>
               </div>
+
+              {/* Project picker toggle */}
+              {projects.length > 0 && (
+                <>
+                  <button
+                    onClick={() => updateToast(toast.session_id, { showProjects: !toast.showProjects })}
+                    style={{ background: "none", border: "none", cursor: "pointer", color: "#8b919d", fontSize: 11, padding: 0, display: "flex", alignItems: "center", gap: 4 }}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+                      {toast.showProjects ? "expand_less" : "expand_more"}
+                    </span>
+                    {toast.project_id
+                      ? `Project: ${projects.find(p => p.id === toast.project_id)?.name ?? "?"}`
+                      : "Assign project (optional)"}
+                  </button>
+                  {toast.showProjects && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                      {/* Clear option */}
+                      <button
+                        onClick={() => updateToast(toast.session_id, { project_id: null })}
+                        style={{
+                          background: toast.project_id === null ? "#262a31" : "transparent",
+                          border: `1px solid ${toast.project_id === null ? "#58a6ff" : "#414752"}`,
+                          borderRadius: 12, padding: "3px 10px", cursor: "pointer",
+                          color: toast.project_id === null ? "#a2c9ff" : "#8b919d", fontSize: 11,
+                        }}
+                      >
+                        None
+                      </button>
+                      {projects.map(p => (
+                        <button
+                          key={p.id}
+                          onClick={() => updateToast(toast.session_id, { project_id: p.id })}
+                          style={{
+                            background: toast.project_id === p.id ? p.color + "33" : "transparent",
+                            border: `1px solid ${toast.project_id === p.id ? p.color : "#414752"}`,
+                            borderRadius: 12, padding: "3px 10px", cursor: "pointer",
+                            color: toast.project_id === p.id ? p.color : "#c0c7d4", fontSize: 11,
+                            display: "flex", alignItems: "center", gap: 4,
+                          }}
+                        >
+                          <span style={{ width: 6, height: 6, borderRadius: "50%", background: p.color, display: "inline-block" }} />
+                          {p.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           ))}
         </div>
