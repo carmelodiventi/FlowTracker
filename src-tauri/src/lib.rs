@@ -8,7 +8,7 @@ use mongodb::{options::ClientOptions, Client, Database};
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, Runtime,
+    AppHandle, Manager, Runtime,
 };
 
 /// Shared MongoDB database handle (Clone + Send + Sync — no Arc needed).

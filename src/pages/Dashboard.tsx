@@ -741,6 +741,15 @@ export default function Dashboard() {
                     paddingTop: 52,
                     paddingBottom: 52,
                     color: "#484f58",
+                    display: "flex",
+                    height: "auto",
+                    background: "#161b22",
+                    borderRadius: 8,
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 12,
+                    border: "1px solid rgba(255,255,255,0.05)",
                   }}
                 >
                   <span
@@ -1495,17 +1504,9 @@ export default function Dashboard() {
                   color: "#484f58",
                 }}
               >
-                <span
-                  className="material-symbols-outlined"
-                  style={{ fontSize: 48, display: "block", marginBottom: 12 }}
-                >
-                  query_stats
-                </span>
-                <div style={{ fontSize: 13, marginBottom: 6 }}>
-                  Nessuna attività tracciata per {isToday ? "oggi" : date}.
-                </div>
                 <div style={{ fontSize: 12 }}>
-                  Abilita le app nella whitelist per iniziare il tracking.
+                  Abilita le app nella whitelist per iniziare il tracking ancora
+                  nessuna attività tracciata per {isToday ? "oggi" : date}.
                 </div>
               </div>
             )}

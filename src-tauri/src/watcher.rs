@@ -38,7 +38,7 @@ fn run(db: Database, app: AppHandle) {
         .build()
         .expect("watcher runtime");
 
-    println!("[Flow Tracker] Watcher started (MongoDB-only)");
+    println!("[Flow Tracker] Watcher started");
 
     // Close any sessions left active from a previous crash.
     rt.block_on(async {
