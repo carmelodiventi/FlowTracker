@@ -81,10 +81,9 @@ pub fn run() {
 
             // ── System tray ──────────────────────────────────────────────────
             let menu = build_tray_menu(app.handle())?;
-            let tray_icon = tauri::image::Image::from_path(
-                app.path().resource_dir().unwrap().join("icons/tray-icon.png"),
-            )
-            .unwrap_or_else(|_| app.default_window_icon().unwrap().clone());
+            let tray_icon_bytes = include_bytes!("../icons/tray-icon.png");
+            let tray_icon = tauri::image::Image::from_bytes(tray_icon_bytes)
+                .unwrap_or_else(|_| app.default_window_icon().unwrap().clone());
 
             let _tray = TrayIconBuilder::with_id("main-tray")
                 .icon(tray_icon)
