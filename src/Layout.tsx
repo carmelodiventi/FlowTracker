@@ -72,8 +72,8 @@ export default function Layout() {
       >
         {/* Logo */}
         <div style={{ padding: "0 24px", marginBottom: 40, display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{ width: 32, height: 32, borderRadius: 8, background: "#58a6ff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            <span className="material-symbols-outlined" style={{ color: "#001c38", fontSize: 18 }}>waves</span>
+          <div style={{ width: 32, height: 32, borderRadius: 8, background: "#000", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <img src="/img/logo.svg" width={32} alt="logo"/>
           </div>
           <div>
             <div style={{ fontSize: 22, fontWeight: 800, color: "#f0f6fc", letterSpacing: "-0.05em", lineHeight: 1 }}>Flow</div>
