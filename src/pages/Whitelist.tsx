@@ -1,8 +1,10 @@
 import { useEffect, useState, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { listApplications, toggleApplication, scanRunningApps } from "../api";
 import type { Application } from "../api";
 
 export default function Whitelist() {
+  const { t } = useTranslation();
   const [apps, setApps] = useState<Application[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -90,7 +92,7 @@ export default function Whitelist() {
             color: "#67df70",
           }}
         >
-          {enabledCount} app attive
+          {t("whitelist.activeApps", { count: enabledCount })}
         </span>
       </header>
 
@@ -106,7 +108,7 @@ export default function Whitelist() {
               margin: "0 0 6px",
             }}
           >
-            Gestione Whitelist
+            {t("whitelist.heading")}
           </h1>
           <p
             style={{
@@ -116,9 +118,7 @@ export default function Whitelist() {
               maxWidth: "60%",
             }}
           >
-            Scegli quali applicazioni devono essere tracciate automaticamente
-            dal sistema Flow Tracker per migliorare l'accuratezza del tuo
-            workflow.
+            {t("whitelist.description")}
           </p>
         </div>
 
@@ -140,7 +140,7 @@ export default function Whitelist() {
             </span>
             <input
               type="text"
-              placeholder="Cerca applicazione…"
+              placeholder={t("whitelist.searchPlaceholder")}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               style={{
@@ -181,7 +181,7 @@ export default function Whitelist() {
             >
               radar
             </span>
-            {scanning ? "Scansione…" : "Scansiona App"}
+            {scanning ? t("whitelist.scanning") : t("whitelist.scanApps")}
           </button>
         </div>
 
@@ -190,7 +190,7 @@ export default function Whitelist() {
           <div
             style={{ color: "#8b919d", textAlign: "center", paddingTop: 60 }}
           >
-            Caricamento…
+            {t("whitelist.loading")}
           </div>
         ) : filtered.length === 0 ? (
           <div
@@ -203,8 +203,8 @@ export default function Whitelist() {
               verified_user
             </span>
             {search
-              ? "Nessuna app trovata."
-              : 'Nessuna app scoperta — clicca "Scansiona App".'}
+              ? t("whitelist.noAppsFound")
+              : t("whitelist.noAppsDiscovered")}
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -282,7 +282,7 @@ export default function Whitelist() {
                 <button
                   onClick={() => handleToggle(app)}
                   aria-label={
-                    app.is_enabled ? "Disabilita tracking" : "Abilita tracking"
+                    app.is_enabled ? t("whitelist.disableTracking") : t("whitelist.enableTracking")
                   }
                   style={{
                     width: 44,
@@ -325,7 +325,7 @@ export default function Whitelist() {
         }} />
 
         {/* App Security */}
-        <p style={sectionTitle}>Sicurezza e Privacy</p>
+        <p style={sectionTitle}>{t("whitelist.securityTitle")}</p>
         <p
           style={{
             fontSize: 14,
@@ -334,9 +334,7 @@ export default function Whitelist() {
             color: "#8b919d",
           }}
         >
-          I dati di tracciamento sono memorizzati localmente. Le applicazioni
-          non incluse in questa whitelist verranno completamente ignorate dal
-          modulo di analisi del tempo.
+          {t("whitelist.securityDesc")}
         </p>
       </div>
     </div>

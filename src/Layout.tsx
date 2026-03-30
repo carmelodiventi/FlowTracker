@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { useEffect, useState, useCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { useTranslation } from "react-i18next";
 import { nameSession, listProjects, createWorkSession, assignWorkSessionProject, Project } from "./api";
 
 interface SessionClosedPayload {
@@ -19,10 +20,10 @@ interface NamingToast {
 }
 
 const NAV = [
-  { to: "/", icon: "timeline", label: "Dashboard/Timeline" },
-  { to: "/projects", icon: "folder_open", label: "Projects" },
-  { to: "/whitelist", icon: "verified_user", label: "Whitelist" },
-  { to: "/settings", icon: "settings", label: "Settings" },
+  { to: "/", icon: "timeline", labelKey: "nav.dashboard" },
+  { to: "/projects", icon: "folder_open", labelKey: "nav.projects" },
+  { to: "/whitelist", icon: "verified_user", labelKey: "nav.whitelist" },
+  { to: "/settings", icon: "settings", labelKey: "nav.settings" },
 ];
 
 function formatDuration(secs: number): string {
@@ -33,6 +34,7 @@ function formatDuration(secs: number): string {
 }
 
 export default function Layout() {
+  const { t } = useTranslation();
   const [toasts,   setToasts]   = useState<NamingToast[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
 
@@ -102,14 +104,14 @@ export default function Layout() {
           <div>
             <div style={{ fontSize: 22, fontWeight: 800, color: "#f0f6fc", letterSpacing: "-0.05em", lineHeight: 1 }}>Flow</div>
             <div style={{ fontFamily: "Roboto Mono, monospace", fontSize: 10, color: "#67df70", letterSpacing: "0.15em", textTransform: "uppercase" }}>
-              Tracking: ATTIVO
+              {t("layout.trackingActive")}
             </div>
           </div>
         </div>
 
         {/* Nav links */}
         <nav style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
-          {NAV.map(({ to, icon, label }) => (
+          {NAV.map(({ to, icon, labelKey }) => (
             <NavLink
               key={to}
               to={to}
@@ -134,7 +136,7 @@ export default function Layout() {
               >
                 {icon}
               </span>
-              {label}
+              {t(labelKey)}
             </NavLink>
           ))}
         </nav>
@@ -148,12 +150,12 @@ export default function Layout() {
                 <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#67df70", display: "inline-block" }} />
               </span>
               <span style={{ fontFamily: "Roboto Mono, monospace", fontSize: 10, color: "#c0c7d4", letterSpacing: "0.15em", textTransform: "uppercase" }}>
-                System Tray
+                {t("layout.systemTray")}
               </span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#c0c7d4" }}>
               <span className="material-symbols-outlined" style={{ fontSize: 16 }}>desktop_windows</span>
-              <span style={{ fontSize: 12 }}>Flow Tracker Helper</span>
+              <span style={{ fontSize: 12 }}>{t("layout.helperApp")}</span>
             </div>
           </div>
         </div>
@@ -185,7 +187,7 @@ export default function Layout() {
                 <div>
                   <div style={{ fontWeight: 600, color: "#f0f6fc", fontSize: 13 }}>{toast.app_name}</div>
                   <div style={{ fontSize: 11, color: "#8b919d", fontFamily: "Roboto Mono, monospace" }}>
-                    {formatDuration(toast.duration_secs)} — What task was this?
+                    {formatDuration(toast.duration_secs)} — {t("toast.whatTask")}
                   </div>
                 </div>
                 <button onClick={() => dismissToast(toast.session_id)} style={{ color: "#8b919d", background: "none", border: "none", cursor: "pointer", fontSize: 20, lineHeight: 1, padding: 0 }}>×</button>
@@ -195,7 +197,7 @@ export default function Layout() {
               <div style={{ display: "flex", gap: 8, marginBottom: projects.length > 0 ? 8 : 0 }}>
                 <input
                   type="text"
-                  placeholder="e.g. Fix auth bug…"
+                  placeholder={t("toast.placeholder")}
                   value={toast.input}
                   onChange={(e) => updateToast(toast.session_id, { input: e.target.value })}
                   onKeyDown={(e) => e.key === "Enter" && confirmName(toast)}
@@ -205,7 +207,7 @@ export default function Layout() {
                   onClick={() => confirmName(toast)}
                   style={{ background: "#58a6ff", color: "#001c38", border: "none", borderRadius: 4, padding: "6px 12px", fontWeight: 700, fontSize: 11, cursor: "pointer", letterSpacing: "0.05em", textTransform: "uppercase" }}
                 >
-                  OK
+                  {t("toast.ok")}
                 </button>
               </div>
 
@@ -220,8 +222,8 @@ export default function Layout() {
                       {toast.showProjects ? "expand_less" : "expand_more"}
                     </span>
                     {toast.project_id
-                      ? `Project: ${projects.find(p => p.id === toast.project_id)?.name ?? "?"}`
-                      : "Assign project (optional)"}
+                      ? t("toast.project", { name: projects.find(p => p.id === toast.project_id)?.name ?? "?" })
+                      : t("toast.assignProject")}
                   </button>
                   {toast.showProjects && (
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
@@ -235,7 +237,7 @@ export default function Layout() {
                           color: toast.project_id === null ? "#a2c9ff" : "#8b919d", fontSize: 11,
                         }}
                       >
-                        None
+                        {t("toast.none")}
                       </button>
                       {projects.map(p => (
                         <button

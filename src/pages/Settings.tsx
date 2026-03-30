@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
+import i18n from "../i18n";
 import { getSetting, setSetting } from "../api";
 import {
   type AIProvider,
@@ -8,10 +10,10 @@ import {
 
 interface SettingField {
   key: string;
-  label: string;
-  description: string;
+  labelKey: string;
+  descKey: string;
   type: "number" | "select";
-  options?: { value: string; label: string }[];
+  options?: { value: string; labelKey: string }[];
   unit?: string;
   min?: number;
   max?: number;
@@ -21,47 +23,48 @@ interface SettingField {
 const FIELDS: SettingField[] = [
   {
     key: "idle_timeout",
-    label: "Timeout inattività",
-    description: "Pausa automatica dopo N secondi senza input da tastiera o mouse.",
+    labelKey: "settings.idleTimeoutLabel",
+    descKey: "settings.idleTimeoutDesc",
     type: "number",
-    unit: "secondi",
+    unit: "settings.seconds",
     min: 30,
     max: 1800,
     default: "300",
   },
   {
     key: "auto_merge_threshold",
-    label: "Soglia auto-merge",
-    description: "Unifica sessioni della stessa app separate da meno di N secondi.",
+    labelKey: "settings.autoMergeLabel",
+    descKey: "settings.autoMergeDesc",
     type: "number",
-    unit: "secondi",
+    unit: "settings.seconds",
     min: 0,
     max: 600,
     default: "120",
   },
   {
     key: "focus_grace_period",
-    label: "Grace period focus",
-    description: "If you switch away from an app and return within N seconds, the active session is kept — no new session is created. Set to 0 to disable.",
+    labelKey: "settings.focusGraceLabel",
+    descKey: "settings.focusGraceDesc",
     type: "number",
-    unit: "seconds",
+    unit: "settings.seconds",
     min: 0,
     max: 600,
     default: "120",
   },
   {
     key: "theme",
-    label: "Tema",
-    description: "Aspetto dell'interfaccia.",
+    labelKey: "settings.themeLabel",
+    descKey: "settings.themeDesc",
     type: "select",
     options: [
-      { value: "dark", label: "Scuro" },
-      { value: "light", label: "Chiaro" },
+      { value: "dark", labelKey: "settings.themeDark" },
+      { value: "light", labelKey: "settings.themeLight" },
     ],
   },
 ];
 
 export default function Settings() {
+  const { t } = useTranslation();
   const [values, setValues] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
@@ -74,6 +77,9 @@ export default function Settings() {
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
   const [aiSaved, setAiSaved] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
+
+  // Language picker state — read the currently active language
+  const [currentLang, setCurrentLang] = useState(i18n.language?.slice(0, 2) ?? "en");
 
   useEffect(() => {
     Promise.all(FIELDS.map((f) => getSetting(f.key).then((v) => [f.key, v || f.default || ""] as [string, string]).catch(() => [f.key, f.default ?? ""] as [string, string])))
@@ -135,20 +141,52 @@ export default function Settings() {
         }}
       >
         <span style={{ fontFamily: "Roboto Mono, monospace", fontSize: 13, color: "#a2c9ff", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>
-          Impostazioni
+          {t("settings.headerTitle")}
         </span>
       </header>
 
       <div className="flex-1 overflow-y-auto" style={{ padding: "32px" }}>
         <h1 style={{ fontSize: 28, fontWeight: 800, color: "#f0f6fc", letterSpacing: "-0.04em", margin: "0 0 6px" }}>
-          Impostazioni
+          {t("settings.title")}
         </h1>
         <p style={{ fontSize: 14, color: "#8b919d", marginBottom: 32 }}>
-          Personalizza il comportamento del tracker. Tutte le impostazioni sono salvate localmente.
+          {t("settings.subtitle")}
         </p>
 
+        {/* ── Language picker ─────────────────────────────────────────────── */}
+        <div style={{ marginBottom: 32, maxWidth: 560 }}>
+          <div style={{ background: "#181c22", border: "1px solid rgba(65,71,82,0.3)", borderRadius: 6, padding: "20px 24px" }}>
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 15, fontWeight: 600, color: "#f0f6fc", marginBottom: 4 }}>{t("settings.languageLabel")}</div>
+              <div style={{ fontSize: 12, color: "#8b919d" }}>{t("settings.languageDesc")}</div>
+            </div>
+            <select
+              value={currentLang}
+              onChange={(e) => {
+                const code = e.target.value;
+                setCurrentLang(code);
+                i18n.changeLanguage(code);
+              }}
+              style={{
+                background: "#10141a", border: "1px solid #414752", borderRadius: 4,
+                padding: "8px 12px", color: "#dfe2eb", fontSize: 13, outline: "none",
+                width: "100%",
+              }}
+            >
+              <option value="en">English</option>
+              <option value="it">Italiano</option>
+              <option value="fr">Français</option>
+              <option value="es">Español</option>
+              <option value="zh">中文 (简体)</option>
+              <option value="ru">Русский</option>
+              <option value="ja">日本語</option>
+              <option value="pt">Português (BR)</option>
+            </select>
+          </div>
+        </div>
+
         {loading ? (
-          <div style={{ color: "#8b919d" }}>Caricamento…</div>
+          <div style={{ color: "#8b919d" }}>{t("settings.loading")}</div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 560 }}>
             {FIELDS.map((field) => (
@@ -160,8 +198,8 @@ export default function Settings() {
                 }}
               >
                 <div style={{ marginBottom: 12 }}>
-                  <div style={{ fontSize: 15, fontWeight: 600, color: "#f0f6fc", marginBottom: 4 }}>{field.label}</div>
-                  <div style={{ fontSize: 12, color: "#8b919d" }}>{field.description}</div>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: "#f0f6fc", marginBottom: 4 }}>{t(field.labelKey)}</div>
+                  <div style={{ fontSize: 12, color: "#8b919d" }}>{t(field.descKey)}</div>
                 </div>
                 <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                   {field.type === "select" ? (
@@ -175,7 +213,7 @@ export default function Settings() {
                       }}
                     >
                       {field.options?.map((opt) => (
-                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        <option key={opt.value} value={opt.value}>{t(opt.labelKey)}</option>
                       ))}
                     </select>
                   ) : (
@@ -193,7 +231,7 @@ export default function Settings() {
                         }}
                       />
                       {field.unit && (
-                        <span style={{ fontSize: 12, color: "#8b919d" }}>{field.unit}</span>
+                        <span style={{ fontSize: 12, color: "#8b919d" }}>{t(field.unit)}</span>
                       )}
                     </>
                   )}
@@ -208,7 +246,7 @@ export default function Settings() {
                       whiteSpace: "nowrap",
                     }}
                   >
-                    {saved[field.key] ? "✓ Salvato" : "Salva"}
+                    {saved[field.key] ? t("settings.saved") : t("settings.save")}
                   </button>
                 </div>
               </div>
@@ -220,11 +258,10 @@ export default function Settings() {
         <div style={{ marginTop: 40, maxWidth: 560 }}>
           <div style={{ marginBottom: 16 }}>
             <h2 style={{ fontSize: 18, fontWeight: 700, color: "#f0f6fc", margin: "0 0 4px" }}>
-              ✨ AI Integration
+              {t("settings.aiTitle")}
             </h2>
             <p style={{ fontSize: 13, color: "#8b919d", margin: 0 }}>
-              Suggest task names and generate invoice descriptions automatically.
-              Your API key is stored locally and never leaves your device.
+              {t("settings.aiDesc")}
             </p>
           </div>
 
@@ -232,11 +269,11 @@ export default function Settings() {
 
             {/* Provider selector */}
             <div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#c9d1d9", marginBottom: 8 }}>Provider</div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#c9d1d9", marginBottom: 8 }}>{t("settings.provider")}</div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 {(["none", "openai", "mistral", "google", "ollama"] as AIProvider[]).map((p) => {
                   const labels: Record<AIProvider, string> = {
-                    none: "Disabled",
+                    none: t("settings.disabled"),
                     openai: "OpenAI",
                     mistral: "Mistral",
                     google: "Gemini",
@@ -265,7 +302,7 @@ export default function Settings() {
             {aiProvider !== "none" && aiProvider !== "ollama" && (
               <div>
                 <div style={{ fontSize: 13, fontWeight: 600, color: "#c9d1d9", marginBottom: 8 }}>
-                  API Key
+                  {t("settings.apiKey")}
                   {aiProvider === "openai" && <span style={{ color: "#8b949e", fontWeight: 400 }}> — openai.com</span>}
                   {aiProvider === "mistral" && <span style={{ color: "#8b949e", fontWeight: 400 }}> — console.mistral.ai</span>}
                   {aiProvider === "google" && <span style={{ color: "#8b949e", fontWeight: 400 }}> — aistudio.google.com</span>}
@@ -275,7 +312,7 @@ export default function Settings() {
                     type={showApiKey ? "text" : "password"}
                     value={aiApiKey}
                     onChange={(e) => setAiApiKey(e.target.value)}
-                    placeholder="Paste your API key…"
+                    placeholder={t("settings.pasteApiKey")}
                     style={{
                       flex: 1, background: "#10141a", border: "1px solid #414752", borderRadius: 4,
                       padding: "8px 12px", color: "#dfe2eb", fontSize: 13, outline: "none",
@@ -285,7 +322,7 @@ export default function Settings() {
                   <button
                     onClick={() => setShowApiKey(!showApiKey)}
                     style={{ background: "transparent", border: "1px solid #414752", borderRadius: 4, padding: "8px 10px", color: "#8b949e", cursor: "pointer", fontSize: 13 }}
-                    title={showApiKey ? "Hide key" : "Show key"}
+                    title={showApiKey ? t("settings.hideKey") : t("settings.showKey")}
                   >
                     <span className="material-icons" style={{ fontSize: 16, verticalAlign: "middle" }}>
                       {showApiKey ? "visibility_off" : "visibility"}
@@ -299,12 +336,12 @@ export default function Settings() {
             {aiProvider === "ollama" && (
               <div>
                 <div style={{ fontSize: 13, fontWeight: 600, color: "#c9d1d9", marginBottom: 8 }}>
-                  Ollama Model
+                  {t("settings.ollamaModel")}
                   {ollamaAvailable === true && (
-                    <span style={{ marginLeft: 8, fontSize: 11, color: "#3fb950" }}>● Running</span>
+                    <span style={{ marginLeft: 8, fontSize: 11, color: "#3fb950" }}>{t("settings.ollamaRunning")}</span>
                   )}
                   {ollamaAvailable === false && (
-                    <span style={{ marginLeft: 8, fontSize: 11, color: "#f85149" }}>● Not running — start Ollama first</span>
+                    <span style={{ marginLeft: 8, fontSize: 11, color: "#f85149" }}>{t("settings.ollamaNotRunning")}</span>
                   )}
                 </div>
                 {ollamaModels.length > 0 ? (
@@ -325,7 +362,7 @@ export default function Settings() {
                     type="text"
                     value={aiOllamaModel}
                     onChange={(e) => setAiOllamaModel(e.target.value)}
-                    placeholder="e.g. llama3.2, mistral, phi3"
+                    placeholder={t("settings.ollamaPlaceholder")}
                     style={{
                       width: "100%", boxSizing: "border-box", background: "#10141a", border: "1px solid #414752",
                       borderRadius: 4, padding: "8px 12px", color: "#dfe2eb", fontSize: 13, outline: "none",
@@ -344,11 +381,11 @@ export default function Settings() {
                   letterSpacing: "0.05em", textTransform: "uppercase", transition: "background 0.2s",
                 }}
               >
-                {aiSaved ? "✓ Saved" : "Save AI Settings"}
+                {aiSaved ? t("settings.aiSaved") : t("settings.saveAI")}
               </button>
               {aiProvider !== "none" && (
                 <span style={{ marginLeft: 12, fontSize: 11, color: "#8b949e" }}>
-                  Used for: ✨ Suggest task name · 📄 Invoice descriptions
+                  {t("settings.aiUsedFor")}
                 </span>
               )}
             </div>

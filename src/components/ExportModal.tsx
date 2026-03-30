@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { save } from "@tauri-apps/plugin-dialog";
@@ -50,6 +51,7 @@ function monthRange(): [string, string] {
 }
 
 export default function ExportModal({ onClose }: Props) {
+  const { t } = useTranslation();
   const [preset,     setPreset]     = useState<Preset>("month");
   const [customFrom, setCustomFrom] = useState(isoDate(new Date()));
   const [customTo,   setCustomTo]   = useState(isoDate(new Date()));
@@ -282,10 +284,10 @@ export default function ExportModal({ onClose }: Props) {
         {/* Header */}
         <div style={{ padding: "32px 32px 16px" }}>
           <h2 style={{ margin: 0, fontSize: 22, fontWeight: 900, letterSpacing: "-0.02em", color: C.onSurface }}>
-            Export Session Data
+            {t("export.title")}
           </h2>
           <p style={{ margin: "8px 0 0", fontSize: 13, color: C.onSurfaceVar }}>
-            Configure your session report parameters and file format.
+            {t("export.subtitle")}
           </p>
         </div>
 
@@ -294,24 +296,24 @@ export default function ExportModal({ onClose }: Props) {
           {/* Date range */}
           <div>
             <div style={{ fontFamily: "Roboto Mono, monospace", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", color: C.outline, marginBottom: 12 }}>
-              Time Interval
+              {t("export.timeInterval")}
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <Card id="week" label="This Week"
+              <Card id="week" label={t("export.thisWeek")}
                 sublabel={`${fmtLabel(weekRange()[0])} – ${fmtLabel(weekRange()[1])}`}
                 icon="calendar_view_week" />
-              <Card id="month" label="This Month"
+              <Card id="month" label={t("export.thisMonth")}
                 sublabel={`${fmtLabel(monthRange()[0])} – ${fmtLabel(monthRange()[1])}`}
                 icon="calendar_month" />
-              <Card id="custom" label="Custom Date Range" sublabel="Specify parameters" icon="date_range">
+              <Card id="custom" label={t("export.customDateRange")} sublabel={t("export.specifyParams")} icon="date_range">
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 20 }}>
                   {[
-                    { label: "Start Date", value: customFrom, max: customTo,   onChange: (v: string) => setCustomFrom(v) },
-                    { label: "End Date",   value: customTo,   min: customFrom, onChange: (v: string) => setCustomTo(v)   },
+                    { labelKey: "export.startDate", value: customFrom, max: customTo,   onChange: (v: string) => setCustomFrom(v) },
+                    { labelKey: "export.endDate",   value: customTo,   min: customFrom, onChange: (v: string) => setCustomTo(v)   },
                   ].map(f => (
-                    <div key={f.label}>
+                    <div key={f.labelKey}>
                       <label style={{ display: "block", fontFamily: "Roboto Mono, monospace", fontSize: 10, color: C.outline, marginBottom: 4, textTransform: "uppercase" }}>
-                        {f.label}
+                        {t(f.labelKey)}
                       </label>
                       <div style={{ background: C.surfaceLowest, borderRadius: 4, borderBottom: `2px solid ${C.outlineVar}55`, padding: "6px 8px" }}>
                         <input
@@ -334,30 +336,30 @@ export default function ExportModal({ onClose }: Props) {
           {/* Filters */}
           <div>
             <div style={{ fontFamily: "Roboto Mono, monospace", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", color: C.outline, marginBottom: 12 }}>
-              Filters <span style={{ color: C.outlineVar }}>(optional)</span>
+              {t("export.filters")} <span style={{ color: C.outlineVar }}>({t("export.optional")})</span>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               {/* Client filter */}
               <div>
-                <label style={{ display: "block", fontSize: 11, color: C.onSurfaceVar, marginBottom: 4 }}>Client</label>
+                <label style={{ display: "block", fontSize: 11, color: C.onSurfaceVar, marginBottom: 4 }}>{t("export.client")}</label>
                 <select
                   value={filterClient}
                   onChange={e => { setFilterClient(e.target.value); setFilterProject(""); }}
                   style={selectStyle}
                 >
-                  <option value="">All Clients</option>
+                  <option value="">{t("export.allClients")}</option>
                   {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
               {/* Project filter */}
               <div>
-                <label style={{ display: "block", fontSize: 11, color: C.onSurfaceVar, marginBottom: 4 }}>Project</label>
+                <label style={{ display: "block", fontSize: 11, color: C.onSurfaceVar, marginBottom: 4 }}>{t("export.project")}</label>
                 <select
                   value={filterProject}
                   onChange={e => setFilterProject(e.target.value)}
                   style={selectStyle}
                 >
-                  <option value="">All Projects</option>
+                  <option value="">{t("export.allProjects")}</option>
                   {visibleProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </div>
@@ -368,7 +370,7 @@ export default function ExportModal({ onClose }: Props) {
           <div style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 14px", background: C.surfaceLowest, borderRadius: 6, border: `1px solid ${C.outlineVar}0d` }}>
             <span className="material-symbols-outlined" style={{ fontSize: 18, color: C.primary, marginTop: 1 }}>info</span>
             <span style={{ fontFamily: "Roboto Mono, monospace", fontSize: 11, color: C.onSurfaceVar, lineHeight: 1.6, wordBreak: "break-all" }}>
-              File will be saved as <span style={{ color: C.primary }}>{filename}</span>
+              {t("export.fileSavedAs")} <span style={{ color: C.primary }}>{filename}</span>
             </span>
           </div>
 
@@ -381,14 +383,14 @@ export default function ExportModal({ onClose }: Props) {
             onClick={onClose} disabled={loading}
             style={{ background: "none", border: "none", cursor: "pointer", fontFamily: "Roboto Mono, monospace", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em", color: C.onSurfaceVar, padding: "8px 16px" }}
           >
-            Cancel
+            {t("export.cancel")}
           </button>
           <button
             onClick={handleExport} disabled={loading}
             style={{ background: `linear-gradient(135deg, ${C.primary}, ${C.primaryCont})`, border: "none", cursor: loading ? "not-allowed" : "pointer", color: C.onPrimaryFix, padding: "10px 28px", borderRadius: 6, fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 8, boxShadow: `0 4px 16px ${C.primary}1a`, opacity: loading ? 0.7 : 1 }}
           >
             <span className="material-symbols-outlined" style={{ fontSize: 16 }}>download</span>
-            {loading ? "Generating…" : "Download PDF"}
+            {loading ? t("export.generating") : t("export.downloadPdf")}
           </button>
         </div>
       </div>

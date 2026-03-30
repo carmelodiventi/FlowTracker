@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { useTranslation } from "react-i18next";
 import {
   dailySummary,
   listSessionsForDate,
@@ -90,6 +91,7 @@ function fmtTime(iso: string): string {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
+  const { t } = useTranslation();
   const [date, setDate] = useState(todayISO());
   const [sessions, setSessions] = useState<Session[]>([]);
   const [summary, setSummary] = useState<AppSummary[]>([]);
@@ -413,7 +415,7 @@ export default function Dashboard() {
                 margin: 0,
               }}
             >
-              Timeline
+            {t("dashboard.timeline")}
             </h1>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -441,7 +443,7 @@ export default function Dashboard() {
                 borderRadius: 4,
               }}
             >
-              {isToday ? "Today" : date}
+              {isToday ? t("dashboard.today") : date}
             </button>
             <button
               onClick={() => offsetDate(1)}
@@ -490,7 +492,7 @@ export default function Dashboard() {
             >
               download
             </span>
-            Export
+            {t("dashboard.export")}
           </button>
           {liveSecs > 0 && (
             <span
@@ -514,7 +516,7 @@ export default function Dashboard() {
                   animation: "pulse 1.4s infinite",
                 }}
               />
-              LIVE
+              {t("dashboard.live")}
             </span>
           )}
           <span
@@ -537,7 +539,7 @@ export default function Dashboard() {
               textTransform: "uppercase",
             }}
           >
-            DAILY TOTAL
+            {t("dashboard.dailyTotal")}
           </span>
         </div>
       </header>
@@ -563,7 +565,7 @@ export default function Dashboard() {
               fontSize: 14,
             }}
           >
-            Caricamento…
+            {t("dashboard.loading")}
           </div>
         ) : (
           <>
@@ -586,7 +588,7 @@ export default function Dashboard() {
                   day: "numeric",
                 })}
               </p>
-              <div style={{ display: "flex", alignItems: "baseline", gap: 16 }}>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 16 }}>
                 <h2
                   style={{
                     fontFamily: "'Inter', sans-serif",
@@ -612,7 +614,7 @@ export default function Dashboard() {
                       textTransform: "uppercase",
                     }}
                   >
-                    {liveSecs > 0 ? "● ACTIVE FLOW" : "ACTIVE FLOW"}
+                    {liveSecs > 0 ? `● ${t("dashboard.activeFlow")}` : t("dashboard.activeFlow")}
                   </span>
                 )}
               </div>
@@ -628,7 +630,7 @@ export default function Dashboard() {
                   marginBottom: 10,
                 }}
               >
-                <span style={sectionLabel}>Application Distribution</span>
+                <span style={sectionLabel}>{t("dashboard.applicationDistribution")}</span>
                 <span
                   style={{
                     fontFamily: "Roboto Mono, monospace",
@@ -637,7 +639,7 @@ export default function Dashboard() {
                     letterSpacing: "0.04em",
                   }}
                 >
-                  TOTALE REGISTRATO: {fmtClock(totalRecorded)}
+                  {t("dashboard.totalRecorded")}: {fmtClock(totalRecorded)}
                 </span>
               </div>
 
@@ -776,7 +778,7 @@ export default function Dashboard() {
                     border: "1px solid rgba(255,255,255,0.05)",
                   }}
                 >
-                  Nessuna attività registrata
+                  {t("dashboard.noActivity")}
                 </div>
               )}
             </section>
@@ -808,7 +810,7 @@ export default function Dashboard() {
                     timeline
                   </span>
                   <span style={{ fontSize: 13 }}>
-                    No sessions for {isToday ? "today" : date}
+                    {t("dashboard.noSessions", { date: isToday ? t("dashboard.today").toLowerCase() : date })}
                   </span>
                 </div>
               ) : (
@@ -846,7 +848,7 @@ export default function Dashboard() {
                                 animation: "pulse 1.4s infinite",
                               }}
                             />
-                            Now Tracking
+                            {t("dashboard.nowTracking")}
                           </div>
                           <div
                             key={s.id}
@@ -944,7 +946,7 @@ export default function Dashboard() {
                               onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(248,81,73,0.1)")}
                             >
                               <span className="material-symbols-outlined" style={{ fontSize: 13 }}>stop_circle</span>
-                              Stop
+                              {t("dashboard.stop")}
                             </button>
                             {linkedWs && (
                               <span
@@ -984,7 +986,7 @@ export default function Dashboard() {
                         <span className="material-symbols-outlined">
                           lightbulb_2
                         </span>{" "}
-                        Session needing a task
+                        {t("dashboard.sessionsNeedingTask")}
                       </div>
                       <div
                         style={{
@@ -1165,7 +1167,7 @@ export default function Dashboard() {
                     marginBottom: 10,
                   }}
                 >
-                  Tasks
+                  {t("dashboard.tasks")}
                 </span>
                 <div
                   style={{ display: "flex", flexDirection: "column", gap: 8 }}
@@ -1197,7 +1199,7 @@ export default function Dashboard() {
                           {/* Chevron toggle */}
                           <button
                             onClick={() => handleToggleWsCollapse(ws.id)}
-                            title={isExpanded ? "Collapse" : "Expand"}
+                            title={isExpanded ? t("dashboard.collapse") : t("dashboard.expand")}
                             style={{
                               background: "none",
                               border: "none",
@@ -1265,7 +1267,7 @@ export default function Dashboard() {
                                   }
                                 }}
                                 style={inlineInput}
-                                placeholder="Task name…"
+                                placeholder={t("dashboard.taskNamePlaceholder")}
                               />
                               <div
                                 style={{
@@ -1295,7 +1297,7 @@ export default function Dashboard() {
                                     cursor: "pointer",
                                   }}
                                 >
-                                  No project
+                                  {t("dashboard.noProject")}
                                 </button>
                                 {projects.map((p) => (
                                   <button
@@ -1329,7 +1331,7 @@ export default function Dashboard() {
                                   onClick={() => handleUpdateWorkSession(ws.id)}
                                   style={pillBtn("#3fb950", "#0d1117")}
                                 >
-                                  Save
+                                  {t("dashboard.save")}
                                 </button>
                                 <button
                                   onClick={() => handleSuggestWsName(ws)}
@@ -1342,7 +1344,7 @@ export default function Dashboard() {
                                     cursor: suggestingWsId === ws.id ? "wait" : "pointer",
                                   }}
                                 >
-                                  {suggestingWsId === ws.id ? "…" : "✨ Suggest"}
+                                  {suggestingWsId === ws.id ? t("dashboard.suggesting") : t("dashboard.suggest")}
                                 </button>
                                 <button
                                   onClick={() => setEditingWsId(null)}
@@ -1412,9 +1414,8 @@ export default function Dashboard() {
                                   >
                                     {fmtDuration(ws.total_secs)}
                                   </span>
-                                  {" · "}
-                                  {ws.session_count} session
-                                  {ws.session_count !== 1 ? "i" : "e"}
+                                {" · "}
+                                  {t("dashboard.sessionCount", { count: ws.session_count })}
                                 </div>
                               </div>
 
@@ -1523,10 +1524,10 @@ export default function Dashboard() {
                             borderBottom: "1px solid rgba(88,166,255,0.1)",
                           }}>
                             <div style={{ fontSize: 11, color: "#58a6ff", fontWeight: 600, marginBottom: 6, letterSpacing: "0.04em", textTransform: "uppercase" }}>
-                              ✨ Invoice Description
+                              {t("dashboard.invoiceDesc")}
                             </div>
                             {generatingInvoiceWsId === ws.id ? (
-                              <div style={{ fontSize: 13, color: "#8b949e", fontStyle: "italic" }}>Generating…</div>
+                              <div style={{ fontSize: 13, color: "#8b949e", fontStyle: "italic" }}>{t("dashboard.generating")}</div>
                             ) : (
                               <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
                                 <p style={{ flex: 1, margin: 0, fontSize: 13, color: "#c9d1d9", lineHeight: 1.6 }}>
@@ -1537,7 +1538,7 @@ export default function Dashboard() {
                                   title="Copy to clipboard"
                                   style={{ background: "none", border: "1px solid #414752", borderRadius: 4, padding: "4px 8px", color: "#8b949e", cursor: "pointer", fontSize: 11, whiteSpace: "nowrap", flexShrink: 0 }}
                                 >
-                                  Copy
+                                  {t("dashboard.copy")}
                                 </button>
                               </div>
                             )}
@@ -1555,7 +1556,7 @@ export default function Dashboard() {
                                   color: "#484f58",
                                 }}
                               >
-                                Loading…
+                                {t("dashboard.loading")}
                               </div>
                             ) : (
                               expandedSessions.map((s) => (
@@ -1656,8 +1657,9 @@ export default function Dashboard() {
                 }}
               >
                 <div style={{ fontSize: 12 }}>
-                  Abilita le app nella whitelist per iniziare il tracking ancora
-                  nessuna attività tracciata per {isToday ? "oggi" : date}.
+                  {isToday
+                    ? t("dashboard.enableAppsHintToday")
+                    : t("dashboard.enableAppsHint", { date })}
                 </div>
               </div>
             )}
@@ -1700,7 +1702,7 @@ export default function Dashboard() {
             >
               folder_special
             </span>
-            Add to Task ({selected.size} session{selected.size > 1 ? "s" : ""})
+            {t("dashboard.addToTask", { count: selected.size })}
           </button>
         </div>
       )}
@@ -1741,7 +1743,7 @@ export default function Dashboard() {
                 delete
               </span>
               <span style={{ fontSize: 15, fontWeight: 600, color: "#f6f6fc" }}>
-                Delete session?
+                {t("dashboard.deleteSession")}
               </span>
             </div>
             <p
@@ -1752,7 +1754,7 @@ export default function Dashboard() {
                 lineHeight: 1.5,
               }}
             >
-              This session will be permanently removed and cannot be undone.
+              {t("dashboard.deleteConfirm")}
             </p>
             <div
               style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}
@@ -1769,7 +1771,7 @@ export default function Dashboard() {
                   cursor: "pointer",
                 }}
               >
-                Cancel
+                {t("dashboard.cancel")}
               </button>
               <button
                 onClick={async () => {
@@ -1787,7 +1789,7 @@ export default function Dashboard() {
                   cursor: "pointer",
                 }}
               >
-                Delete
+                {t("dashboard.delete")}
               </button>
             </div>
           </div>
@@ -1842,7 +1844,7 @@ export default function Dashboard() {
                   color: "#e6edf3",
                 }}
               >
-                New Task
+                {t("dashboard.newTask")}
               </h3>
             </div>
             <p
@@ -1853,8 +1855,7 @@ export default function Dashboard() {
                 lineHeight: 1.5,
               }}
             >
-              Group {selected.size} session{selected.size > 1 ? "s" : ""} into a
-              named task with an optional project.
+              {t("dashboard.groupSessions", { count: selected.size })}
             </p>
 
             <input
@@ -1865,7 +1866,7 @@ export default function Dashboard() {
                 if (e.key === "Enter") handleCreateWorkSession();
                 if (e.key === "Escape") setShowGroupDialog(false);
               }}
-              placeholder="es. Sprint Planning, Deep Work…"
+              placeholder={t("dashboard.taskNamePlaceholder")}
               style={{ ...inlineInput, width: "100%", boxSizing: "border-box" }}
             />
 
@@ -1887,7 +1888,7 @@ export default function Dashboard() {
                   textTransform: "uppercase",
                 }}
               >
-                Project (optional)
+                {t("dashboard.projectOptional")}
               </span>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                 {/* "None" chip */}
@@ -1906,7 +1907,7 @@ export default function Dashboard() {
                     cursor: "pointer",
                   }}
                 >
-                  None
+                  {t("dashboard.none")}
                 </button>
 
                 {/* Existing project chips */}
@@ -1957,7 +1958,7 @@ export default function Dashboard() {
                       cursor: "pointer",
                     }}
                   >
-                    + New project
+                    {t("dashboard.newProject")}
                   </button>
                 ) : (
                   <div
@@ -1987,7 +1988,7 @@ export default function Dashboard() {
                           setNewProjectName("");
                         }
                       }}
-                      placeholder="Project name…"
+                      placeholder={t("dashboard.projectNamePlaceholder")}
                       style={{
                         background: "#23262c",
                         border: "1px solid rgba(106,255,201,0.3)",
@@ -2016,7 +2017,7 @@ export default function Dashboard() {
                 onClick={() => setShowGroupDialog(false)}
                 style={pillBtn("rgba(255,255,255,0.07)", "#8b949e")}
               >
-                Cancel
+                {t("dashboard.cancel")}
               </button>
               <button
                 onClick={handleCreateWorkSession}
@@ -2027,7 +2028,7 @@ export default function Dashboard() {
                   cursor: groupName.trim() ? "pointer" : "not-allowed",
                 }}
               >
-                Create
+                {t("dashboard.create")}
               </button>
             </div>
           </div>

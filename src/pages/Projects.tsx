@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import type { CSSProperties } from "react";
+import { useTranslation } from "react-i18next";
 import {
   listProjectsDetail,
   listClients,
@@ -95,6 +96,7 @@ interface ProjectFormProps {
 }
 
 function ProjectForm({ form, clients, onChange, onSubmit, onCancel, submitLabel }: ProjectFormProps) {
+  const { t } = useTranslation();
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <input
@@ -105,14 +107,14 @@ function ProjectForm({ form, clients, onChange, onSubmit, onCancel, submitLabel 
           if (e.key === "Enter" && form.name.trim()) onSubmit();
           if (e.key === "Escape") onCancel();
         }}
-        placeholder="Project name…"
+        placeholder={t("projects.projectNamePlaceholder")}
         style={inputStyle}
       />
       <textarea
         rows={2}
         value={form.description}
         onChange={(e) => onChange({ ...form, description: e.target.value })}
-        placeholder="Description (optional)…"
+        placeholder={t("projects.descriptionPlaceholder")}
         style={textareaStyle}
       />
       <select
@@ -122,7 +124,7 @@ function ProjectForm({ form, clients, onChange, onSubmit, onCancel, submitLabel 
         }
         style={selectStyle}
       >
-        <option value="">No client</option>
+        <option value="">{t("projects.noClient")}</option>
         {clients.map((c) => (
           <option key={c.id} value={c.id}>
             {c.name}
@@ -131,7 +133,7 @@ function ProjectForm({ form, clients, onChange, onSubmit, onCancel, submitLabel 
       </select>
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
         <button onClick={onCancel} style={pillBtn("rgba(255,255,255,0.07)", MUTED)}>
-          Cancel
+          {t("projects.cancel")}
         </button>
         <button
           onClick={onSubmit}
@@ -148,6 +150,7 @@ function ProjectForm({ form, clients, onChange, onSubmit, onCancel, submitLabel 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function Projects() {
+  const { t } = useTranslation();
   const [projects, setProjects]       = useState<ProjectDetail[]>([]);
   const [clients, setClients]         = useState<Client[]>([]);
   const [loading, setLoading]         = useState(true);
@@ -277,7 +280,7 @@ export default function Projects() {
             color: "#f6f6fc",
           }}
         >
-          Projects
+          {t("projects.title")}
         </h1>
       </header>
 
@@ -294,7 +297,7 @@ export default function Projects() {
       >
         {loading ? (
           <div style={{ color: MUTED, textAlign: "center", paddingTop: 80, fontSize: 14 }}>
-            Loading…
+            {t("projects.loading")}
           </div>
         ) : (
           <div style={{ display: "flex", gap: 24, alignItems: "flex-start", flexWrap: "wrap" }}>
@@ -319,7 +322,7 @@ export default function Projects() {
                     color: MUTED,
                   }}
                 >
-                  Projects
+                  {t("projects.title")}
                 </span>
                 <button
                   onClick={() => { setShowCreate((v) => !v); setEditingId(null); setCreateForm(emptyForm()); }}
@@ -338,7 +341,7 @@ export default function Projects() {
                   }}
                 >
                   <span className="material-symbols-outlined" style={{ fontSize: 16 }}>add</span>
-                  New
+                  {t("projects.new")}
                 </button>
               </div>
 
@@ -362,7 +365,7 @@ export default function Projects() {
                       letterSpacing: "0.04em",
                     }}
                   >
-                    NEW PROJECT
+                    {t("projects.newProjectBadge")}
                   </div>
                   <ProjectForm
                     form={createForm}
@@ -370,7 +373,7 @@ export default function Projects() {
                     onChange={setCreateForm}
                     onSubmit={handleCreate}
                     onCancel={() => { setShowCreate(false); setCreateForm(emptyForm()); }}
-                    submitLabel="Create"
+                    submitLabel={t("projects.create")}
                   />
                 </div>
               )}
@@ -391,7 +394,7 @@ export default function Projects() {
                   >
                     folder_open
                   </span>
-                  <span style={{ fontSize: 13 }}>No projects yet. Click "New" to create one.</span>
+                  <span style={{ fontSize: 13 }}>{t("projects.noProjects")}</span>
                 </div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -418,7 +421,7 @@ export default function Projects() {
                               letterSpacing: "0.04em",
                             }}
                           >
-                            EDITING
+                            {t("projects.editingBadge")}
                           </div>
                           <ProjectForm
                             form={editForm}
@@ -426,7 +429,7 @@ export default function Projects() {
                             onChange={setEditForm}
                             onSubmit={handleSaveEdit}
                             onCancel={() => { setEditingId(null); setEditForm(emptyForm()); }}
-                            submitLabel="Save"
+                            submitLabel={t("projects.save")}
                           />
                         </div>
                       ) : (
@@ -582,7 +585,7 @@ export default function Projects() {
                     color: MUTED,
                   }}
                 >
-                  Clients
+                  {t("projects.clients")}
                 </span>
                 <span
                   style={{
@@ -591,7 +594,7 @@ export default function Projects() {
                     fontFamily: "Roboto Mono, monospace",
                   }}
                 >
-                  {clients.length} total
+                  {t("projects.clientsTotal", { count: clients.length })}
                 </span>
               </div>
 
@@ -613,7 +616,7 @@ export default function Projects() {
                       fontSize: 12,
                     }}
                   >
-                    No clients yet.
+                    {t("projects.noClients")}
                   </div>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column" }}>
@@ -678,7 +681,7 @@ export default function Projects() {
                       if (e.key === "Enter") handleAddClient();
                       if (e.key === "Escape") setNewClientName("");
                     }}
-                    placeholder="New client name…"
+                    placeholder={t("projects.newClientPlaceholder")}
                     style={{ ...inputStyle, flex: 1, padding: "6px 10px" }}
                   />
                   <button
@@ -690,7 +693,7 @@ export default function Projects() {
                       padding: "6px 14px",
                     }}
                   >
-                    Add
+                    {t("projects.add")}
                   </button>
                 </div>
 
