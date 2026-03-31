@@ -53,7 +53,7 @@ export default function Layout() {
   useEffect(() => {
     const unlisten = listen<SessionClosedPayload>("flow:session-closed", ({ payload }) => {
       if (payload.duration_secs < 60) return;
-      setToasts((prev) => [...prev.slice(-4), {
+      setToasts([{
         ...payload,
         input: "", project_id: null, showProjects: false,
         mode: "new", existingWsId: null,
