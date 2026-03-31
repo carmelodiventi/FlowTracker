@@ -190,6 +190,10 @@ export const listSessionsForWorkSession = (workSessionId: string): Promise<Sessi
 export const removeSessionFromWorkSession = (sessionId: string): Promise<void> =>
   invoke("remove_session_from_work_session", { sessionId });
 
+export const addSessionToWorkSession = (sessionId: string, workSessionId: string): Promise<void> =>
+  invoke("add_session_to_work_session", { sessionId, workSessionId });
+
+
 export const assignWorkSessionProject = (
   workSessionId: string,
   projectId: string | null

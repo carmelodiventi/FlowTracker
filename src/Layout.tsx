@@ -2,7 +2,7 @@ import { NavLink, Outlet } from "react-router-dom";
 import { useEffect, useState, useCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
-import { nameSession, listProjects, createWorkSession, assignWorkSessionProject, Project } from "./api";
+import { nameSession, listProjects, listAllWorkSessions, createWorkSession, assignWorkSessionProject, addSessionToWorkSession, Project, WorkSession } from "./api";
 
 interface SessionClosedPayload {
   session_id: string;
@@ -10,13 +10,19 @@ interface SessionClosedPayload {
   duration_secs: number;
 }
 
+type ToastMode = "new" | "existing";
+
 interface NamingToast {
   session_id: string;
   app_name: string;
   duration_secs: number;
+  // "new" mode
   input: string;
   project_id: string | null;
   showProjects: boolean;
+  // "existing" mode
+  mode: ToastMode;
+  existingWsId: string | null;
 }
 
 const NAV = [
@@ -35,33 +41,42 @@ function formatDuration(secs: number): string {
 
 export default function Layout() {
   const { t } = useTranslation();
-  const [toasts,   setToasts]   = useState<NamingToast[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [toasts,       setToasts]       = useState<NamingToast[]>([]);
+  const [projects,     setProjects]     = useState<Project[]>([]);
+  const [workSessions, setWorkSessions] = useState<WorkSession[]>([]);
 
   useEffect(() => {
     listProjects().then(setProjects).catch(console.error);
+    listAllWorkSessions().then(setWorkSessions).catch(console.error);
   }, []);
 
   useEffect(() => {
     const unlisten = listen<SessionClosedPayload>("flow:session-closed", ({ payload }) => {
       if (payload.duration_secs < 60) return;
-      setToasts((prev) => [...prev.slice(-4), { ...payload, input: "", project_id: null, showProjects: false }]);
+      setToasts((prev) => [...prev.slice(-4), {
+        ...payload,
+        input: "", project_id: null, showProjects: false,
+        mode: "new", existingWsId: null,
+      }]);
+      // Refresh work sessions list so newly created ones appear
+      listAllWorkSessions().then(setWorkSessions).catch(console.error);
     });
     return () => { unlisten.then((f) => f()); };
   }, []);
 
   const confirmName = useCallback(async (toast: NamingToast) => {
-    const name = toast.input.trim();
     try {
-      if (name) {
-        // Create a work session and optionally assign a project
-        const ws = await createWorkSession(name, [toast.session_id]);
-        if (toast.project_id) {
-          await assignWorkSessionProject(ws.id, toast.project_id);
-        }
+      if (toast.mode === "existing" && toast.existingWsId) {
+        await addSessionToWorkSession(toast.session_id, toast.existingWsId);
       } else {
-        // Just tag the session with a task name if no work session
-        await nameSession(toast.session_id, name).catch(() => {});
+        const name = toast.input.trim();
+        if (name) {
+          const ws = await createWorkSession(name, [toast.session_id]);
+          if (toast.project_id) await assignWorkSessionProject(ws.id, toast.project_id);
+          setWorkSessions(prev => [...prev, ws]);
+        } else {
+          await nameSession(toast.session_id, name).catch(() => {});
+        }
       }
     } catch (e) {
       console.error("[toast] confirm error:", e);
@@ -193,70 +208,137 @@ export default function Layout() {
                 <button onClick={() => dismissToast(toast.session_id)} style={{ color: "#8b919d", background: "none", border: "none", cursor: "pointer", fontSize: 20, lineHeight: 1, padding: 0 }}>×</button>
               </div>
 
-              {/* Task name input + OK */}
-              <div style={{ display: "flex", gap: 8, marginBottom: projects.length > 0 ? 8 : 0 }}>
-                <input
-                  type="text"
-                  placeholder={t("toast.placeholder")}
-                  value={toast.input}
-                  onChange={(e) => updateToast(toast.session_id, { input: e.target.value })}
-                  onKeyDown={(e) => e.key === "Enter" && confirmName(toast)}
-                  style={{ flex: 1, background: "#10141a", border: "1px solid #414752", borderRadius: 4, padding: "6px 10px", color: "#dfe2eb", fontSize: 12, outline: "none" }}
-                />
-                <button
-                  onClick={() => confirmName(toast)}
-                  style={{ background: "#58a6ff", color: "#001c38", border: "none", borderRadius: 4, padding: "6px 12px", fontWeight: 700, fontSize: 11, cursor: "pointer", letterSpacing: "0.05em", textTransform: "uppercase" }}
-                >
-                  {t("toast.ok")}
-                </button>
-              </div>
+              {/* Mode toggle tabs — only show if there are existing work sessions */}
+              {workSessions.length > 0 && (
+                <div style={{ display: "flex", gap: 0, marginBottom: 10, borderRadius: 4, overflow: "hidden", border: "1px solid #414752" }}>
+                  {(["new", "existing"] as ToastMode[]).map(mode => (
+                    <button
+                      key={mode}
+                      onClick={() => updateToast(toast.session_id, { mode, existingWsId: null })}
+                      style={{
+                        flex: 1, background: toast.mode === mode ? "#262a31" : "transparent",
+                        border: "none", cursor: "pointer",
+                        color: toast.mode === mode ? "#a2c9ff" : "#8b919d",
+                        fontSize: 11, fontWeight: toast.mode === mode ? 700 : 400,
+                        padding: "5px 0", letterSpacing: "0.05em",
+                      }}
+                    >
+                      {mode === "new" ? "＋ New task" : "→ Add to existing"}
+                    </button>
+                  ))}
+                </div>
+              )}
 
-              {/* Project picker toggle */}
-              {projects.length > 0 && (
+              {toast.mode === "new" ? (
                 <>
-                  <button
-                    onClick={() => updateToast(toast.session_id, { showProjects: !toast.showProjects })}
-                    style={{ background: "none", border: "none", cursor: "pointer", color: "#8b919d", fontSize: 11, padding: 0, display: "flex", alignItems: "center", gap: 4 }}
-                  >
-                    <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
-                      {toast.showProjects ? "expand_less" : "expand_more"}
-                    </span>
-                    {toast.project_id
-                      ? t("toast.project", { name: projects.find(p => p.id === toast.project_id)?.name ?? "?" })
-                      : t("toast.assignProject")}
-                  </button>
-                  {toast.showProjects && (
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
-                      {/* Clear option */}
+                  {/* Task name input + OK */}
+                  <div style={{ display: "flex", gap: 8, marginBottom: projects.length > 0 ? 8 : 0 }}>
+                    <input
+                      type="text"
+                      placeholder={t("toast.placeholder")}
+                      value={toast.input}
+                      onChange={(e) => updateToast(toast.session_id, { input: e.target.value })}
+                      onKeyDown={(e) => e.key === "Enter" && confirmName(toast)}
+                      style={{ flex: 1, background: "#10141a", border: "1px solid #414752", borderRadius: 4, padding: "6px 10px", color: "#dfe2eb", fontSize: 12, outline: "none" }}
+                    />
+                    <button
+                      onClick={() => confirmName(toast)}
+                      style={{ background: "#58a6ff", color: "#001c38", border: "none", borderRadius: 4, padding: "6px 12px", fontWeight: 700, fontSize: 11, cursor: "pointer", letterSpacing: "0.05em", textTransform: "uppercase" }}
+                    >
+                      {t("toast.ok")}
+                    </button>
+                  </div>
+
+                  {/* Project picker toggle */}
+                  {projects.length > 0 && (
+                    <>
                       <button
-                        onClick={() => updateToast(toast.session_id, { project_id: null })}
+                        onClick={() => updateToast(toast.session_id, { showProjects: !toast.showProjects })}
+                        style={{ background: "none", border: "none", cursor: "pointer", color: "#8b919d", fontSize: 11, padding: 0, display: "flex", alignItems: "center", gap: 4 }}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+                          {toast.showProjects ? "expand_less" : "expand_more"}
+                        </span>
+                        {toast.project_id
+                          ? t("toast.project", { name: projects.find(p => p.id === toast.project_id)?.name ?? "?" })
+                          : t("toast.assignProject")}
+                      </button>
+                      {toast.showProjects && (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                          <button
+                            onClick={() => updateToast(toast.session_id, { project_id: null })}
+                            style={{
+                              background: toast.project_id === null ? "#262a31" : "transparent",
+                              border: `1px solid ${toast.project_id === null ? "#58a6ff" : "#414752"}`,
+                              borderRadius: 12, padding: "3px 10px", cursor: "pointer",
+                              color: toast.project_id === null ? "#a2c9ff" : "#8b919d", fontSize: 11,
+                            }}
+                          >
+                            {t("toast.none")}
+                          </button>
+                          {projects.map(p => (
+                            <button
+                              key={p.id}
+                              onClick={() => updateToast(toast.session_id, { project_id: p.id })}
+                              style={{
+                                background: toast.project_id === p.id ? p.color + "33" : "transparent",
+                                border: `1px solid ${toast.project_id === p.id ? p.color : "#414752"}`,
+                                borderRadius: 12, padding: "3px 10px", cursor: "pointer",
+                                color: toast.project_id === p.id ? p.color : "#c0c7d4", fontSize: 11,
+                                display: "flex", alignItems: "center", gap: 4,
+                              }}
+                            >
+                              <span style={{ width: 6, height: 6, borderRadius: "50%", background: p.color, display: "inline-block" }} />
+                              {p.name}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </>
+              ) : (
+                /* Existing work session picker */
+                <>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 180, overflowY: "auto", marginBottom: 8 }}>
+                    {workSessions.slice().reverse().map(ws => (
+                      <button
+                        key={ws.id}
+                        onClick={() => updateToast(toast.session_id, { existingWsId: ws.id })}
                         style={{
-                          background: toast.project_id === null ? "#262a31" : "transparent",
-                          border: `1px solid ${toast.project_id === null ? "#58a6ff" : "#414752"}`,
-                          borderRadius: 12, padding: "3px 10px", cursor: "pointer",
-                          color: toast.project_id === null ? "#a2c9ff" : "#8b919d", fontSize: 11,
+                          background: toast.existingWsId === ws.id ? "#262a31" : "transparent",
+                          border: `1px solid ${toast.existingWsId === ws.id ? "#58a6ff" : "#414752"}`,
+                          borderRadius: 4, padding: "7px 10px", cursor: "pointer",
+                          display: "flex", alignItems: "center", gap: 8, textAlign: "left",
                         }}
                       >
-                        {t("toast.none")}
+                        <span
+                          style={{ width: 8, height: 8, borderRadius: "50%", background: ws.color, flexShrink: 0 }}
+                        />
+                        <div style={{ flex: 1, overflow: "hidden" }}>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: toast.existingWsId === ws.id ? "#a2c9ff" : "#dfe2eb", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {ws.name}
+                          </div>
+                          {ws.project_name && (
+                            <div style={{ fontSize: 10, color: "#8b919d", fontFamily: "Roboto Mono, monospace" }}>{ws.project_name}</div>
+                          )}
+                        </div>
                       </button>
-                      {projects.map(p => (
-                        <button
-                          key={p.id}
-                          onClick={() => updateToast(toast.session_id, { project_id: p.id })}
-                          style={{
-                            background: toast.project_id === p.id ? p.color + "33" : "transparent",
-                            border: `1px solid ${toast.project_id === p.id ? p.color : "#414752"}`,
-                            borderRadius: 12, padding: "3px 10px", cursor: "pointer",
-                            color: toast.project_id === p.id ? p.color : "#c0c7d4", fontSize: 11,
-                            display: "flex", alignItems: "center", gap: 4,
-                          }}
-                        >
-                          <span style={{ width: 6, height: 6, borderRadius: "50%", background: p.color, display: "inline-block" }} />
-                          {p.name}
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                    ))}
+                  </div>
+                  <button
+                    onClick={() => confirmName(toast)}
+                    disabled={!toast.existingWsId}
+                    style={{
+                      width: "100%", background: toast.existingWsId ? "#58a6ff" : "#262a31",
+                      color: toast.existingWsId ? "#001c38" : "#8b919d",
+                      border: "none", borderRadius: 4, padding: "7px 0",
+                      fontWeight: 700, fontSize: 11, cursor: toast.existingWsId ? "pointer" : "default",
+                      letterSpacing: "0.05em", textTransform: "uppercase",
+                    }}
+                  >
+                    Add to task
+                  </button>
                 </>
               )}
             </div>

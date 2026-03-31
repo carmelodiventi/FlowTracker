@@ -700,6 +700,29 @@ pub async fn remove_session_from_work_session(
 }
 
 #[tauri::command]
+pub async fn add_session_to_work_session(
+    state: State<'_, MongoState>,
+    session_id: String,
+    work_session_id: String,
+) -> Result<(), String> {
+    let sess_oid = ObjectId::parse_str(&session_id).map_err(|e| e.to_string())?;
+    let ws_oid   = ObjectId::parse_str(&work_session_id).map_err(|e| e.to_string())?;
+    let db  = &state.db;
+    let did = &state.user_id;
+    // Verify the work session belongs to this user
+    let ws_col = db.collection::<Document>("work_sessions");
+    let exists = ws_col.find_one(doc! { "_id": ws_oid, "user_id": did })
+        .await.map_err(|e| e.to_string())?;
+    if exists.is_none() { return Err("Work session not found".to_string()); }
+    // Point the session at the work session
+    db.collection::<Document>("sessions")
+        .update_one(doc! { "_id": sess_oid, "user_id": did },
+                    doc! { "$set": { "work_session_id": ws_oid } })
+        .await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn assign_work_session_project(
     state: State<'_, MongoState>,
     work_session_id: String,

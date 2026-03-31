@@ -168,6 +168,7 @@ pub fn run() {
             delete_work_session,
             list_sessions_for_work_session,
             remove_session_from_work_session,
+            add_session_to_work_session,
             assign_work_session_project,
             // Projects
             list_projects,

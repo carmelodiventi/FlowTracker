@@ -15,6 +15,7 @@ import {
   assignWorkSessionProject,
   listSessionsForWorkSession,
   removeSessionFromWorkSession,
+  addSessionToWorkSession,
 } from "../api";
 import type { Session, AppSummary, WorkSession, Project } from "../api";
 import ExportModal from "../components/ExportModal";
@@ -109,6 +110,8 @@ export default function Dashboard() {
   const [newProjectName, setNewProjectName] = useState("");
   const [showNewProject, setShowNewProject] = useState(false);
   const [showExport, setShowExport] = useState(false);
+  const [groupMode, setGroupMode] = useState<"new" | "existing">("new");
+  const [groupExistingWsId, setGroupExistingWsId] = useState<string | null>(null);
 
   // Collapsible groups state — kept for Work Session (Task) expand/collapse
   const [editingWsId, setEditingWsId] = useState<string | null>(null);
@@ -268,6 +271,16 @@ export default function Dashboard() {
     await load();
   };
 
+  const resetGroupDialog = () => {
+    setGroupName("");
+    setSelectedProject(null);
+    setShowNewProject(false);
+    setNewProjectName("");
+    setGroupMode("new");
+    setGroupExistingWsId(null);
+    setShowGroupDialog(false);
+  };
+
   const handleCreateWorkSession = async () => {
     if (selected.size < 1 || !groupName.trim()) return;
     const ws = await createWorkSession(
@@ -280,11 +293,17 @@ export default function Dashboard() {
       );
     }
     setSelected(new Set());
-    setGroupName("");
-    setSelectedProject(null);
-    setShowNewProject(false);
-    setNewProjectName("");
-    setShowGroupDialog(false);
+    resetGroupDialog();
+    await load();
+  };
+
+  const handleAddToExistingWorkSession = async () => {
+    if (selected.size < 1 || !groupExistingWsId) return;
+    await Promise.all(
+      Array.from(selected).map(sid => addSessionToWorkSession(sid, groupExistingWsId))
+    ).catch(console.error);
+    setSelected(new Set());
+    resetGroupDialog();
     await load();
   };
 
@@ -1679,7 +1698,7 @@ export default function Dashboard() {
           }}
         >
           <button
-            onClick={() => setShowGroupDialog(true)}
+            onClick={() => { setGroupMode("new"); setGroupExistingWsId(null); setShowGroupDialog(true); }}
             style={{
               background: "#58a6ff",
               color: "#0d1117",
@@ -1809,7 +1828,7 @@ export default function Dashboard() {
             zIndex: 200,
           }}
           onClick={(e) => {
-            if (e.target === e.currentTarget) setShowGroupDialog(false);
+            if (e.target === e.currentTarget) resetGroupDialog();
           }}
         >
           <div
@@ -1844,12 +1863,12 @@ export default function Dashboard() {
                   color: "#e6edf3",
                 }}
               >
-                {t("dashboard.newTask")}
+                {groupMode === "new" ? t("dashboard.newTask") : "Add to Task"}
               </h3>
             </div>
             <p
               style={{
-                margin: "0 0 20px",
+                margin: "0 0 16px",
                 fontSize: 12,
                 color: "#8b949e",
                 lineHeight: 1.5,
@@ -1858,13 +1877,91 @@ export default function Dashboard() {
               {t("dashboard.groupSessions", { count: selected.size })}
             </p>
 
+            {/* Mode toggle — only if work sessions exist */}
+            {workSessions.length > 0 && (
+              <div style={{ display: "flex", gap: 0, marginBottom: 20, borderRadius: 6, overflow: "hidden", border: "1px solid rgba(255,255,255,0.1)" }}>
+                {(["new", "existing"] as const).map(mode => (
+                  <button
+                    key={mode}
+                    onClick={() => { setGroupMode(mode); setGroupExistingWsId(null); }}
+                    style={{
+                      flex: 1, background: groupMode === mode ? "rgba(88,166,255,0.12)" : "transparent",
+                      border: "none", cursor: "pointer",
+                      color: groupMode === mode ? "#58a6ff" : "#8b949e",
+                      fontSize: 12, fontWeight: groupMode === mode ? 700 : 400,
+                      padding: "7px 0", letterSpacing: "0.04em",
+                      borderBottom: groupMode === mode ? "2px solid #58a6ff" : "2px solid transparent",
+                      transition: "all 0.15s",
+                    }}
+                  >
+                    {mode === "new" ? "＋ New task" : "→ Existing task"}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {groupMode === "existing" ? (
+              /* ── Existing task picker ── */
+              <>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 220, overflowY: "auto", marginBottom: 16 }}>
+                  {workSessions.slice().reverse().map(ws => (
+                    <button
+                      key={ws.id}
+                      onClick={() => setGroupExistingWsId(ws.id)}
+                      style={{
+                        background: groupExistingWsId === ws.id ? "rgba(88,166,255,0.1)" : "#0d1117",
+                        border: `1px solid ${groupExistingWsId === ws.id ? "#58a6ff" : "rgba(255,255,255,0.08)"}`,
+                        borderRadius: 6, padding: "9px 12px", cursor: "pointer",
+                        display: "flex", alignItems: "center", gap: 10, textAlign: "left",
+                        transition: "all 0.12s",
+                      }}
+                    >
+                      <span style={{ width: 10, height: 10, borderRadius: "50%", background: ws.color, flexShrink: 0 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: groupExistingWsId === ws.id ? "#a2c9ff" : "#e6edf3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {ws.name}
+                        </div>
+                        {ws.project_name && (
+                          <div style={{ fontSize: 10, color: "#8b949e", fontFamily: "Roboto Mono, monospace", marginTop: 1 }}>{ws.project_name}</div>
+                        )}
+                      </div>
+                      {groupExistingWsId === ws.id && (
+                        <span className="material-symbols-outlined" style={{ fontSize: 16, color: "#58a6ff", flexShrink: 0 }}>check_circle</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                  <button
+                    onClick={resetGroupDialog}
+                    style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6, padding: "8px 18px", color: "#8b949e", fontSize: 13, cursor: "pointer" }}
+                  >
+                    {t("common.cancel")}
+                  </button>
+                  <button
+                    onClick={handleAddToExistingWorkSession}
+                    disabled={!groupExistingWsId}
+                    style={{
+                      background: groupExistingWsId ? "#58a6ff" : "#2d333b",
+                      border: "none", borderRadius: 6, padding: "8px 20px",
+                      color: groupExistingWsId ? "#0d1117" : "#484f58",
+                      fontWeight: 700, fontSize: 13, cursor: groupExistingWsId ? "pointer" : "default",
+                    }}
+                  >
+                    Add {selected.size} session{selected.size > 1 ? "s" : ""}
+                  </button>
+                </div>
+              </>
+            ) : (
+              /* ── New task form ── */
+              <>
             <input
               autoFocus
               value={groupName}
               onChange={(e) => setGroupName(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") handleCreateWorkSession();
-                if (e.key === "Escape") setShowGroupDialog(false);
+                if (e.key === "Escape") resetGroupDialog();
               }}
               placeholder={t("dashboard.taskNamePlaceholder")}
               style={{ ...inlineInput, width: "100%", boxSizing: "border-box" }}
@@ -2014,7 +2111,7 @@ export default function Dashboard() {
               }}
             >
               <button
-                onClick={() => setShowGroupDialog(false)}
+                onClick={resetGroupDialog}
                 style={pillBtn("rgba(255,255,255,0.07)", "#8b949e")}
               >
                 {t("dashboard.cancel")}
@@ -2031,6 +2128,8 @@ export default function Dashboard() {
                 {t("dashboard.create")}
               </button>
             </div>
+            </>
+            )}
           </div>
         </div>
       )}
