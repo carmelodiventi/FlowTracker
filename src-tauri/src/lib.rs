@@ -45,8 +45,11 @@ fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 pub fn run() {
     dotenvy::dotenv().ok();
 
-    let mongo_uri = std::env::var("MONGODB_URI")
-        .expect("MONGODB_URI must be set in environment or .env");
+    // Use compile-time embedded URI (release builds) or runtime env var (dev).
+    let mongo_uri = option_env!("MONGODB_URI")
+        .map(|s| s.to_string())
+        .or_else(|| std::env::var("MONGODB_URI").ok())
+        .expect("MONGODB_URI must be set (compile-time via build.rs or runtime .env)");
 
     let user_id = load_or_create_user_id();
     println!("[Flow Tracker] User ID: {}", user_id);
@@ -63,11 +66,13 @@ pub fn run() {
                 let mut opts = ClientOptions::parse(&mongo_uri).await
                     .expect("Invalid MONGODB_URI");
                 opts.app_name = Some("FlowTracker".into());
+                opts.connect_timeout = Some(std::time::Duration::from_secs(10));
+                opts.server_selection_timeout = Some(std::time::Duration::from_secs(10));
                 let client = Client::with_options(opts)
                     .expect("Failed to create MongoDB client");
-                client.database("admin")
-                    .run_command(mongodb::bson::doc! { "ping": 1 }).await
-                    .expect("Cannot reach MongoDB — check MONGODB_URI and network");
+                // Best-effort ping — don't abort if offline at launch
+                let _ = client.database("admin")
+                    .run_command(mongodb::bson::doc! { "ping": 1 }).await;
                 client.database("flowtracker")
             });
 
