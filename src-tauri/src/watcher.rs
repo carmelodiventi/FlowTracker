@@ -10,6 +10,9 @@ use mongodb::{
 };
 use serde::Serialize;
 use std::{
+    collections::HashMap,
+    path::Path,
+    process::Command,
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -20,9 +23,15 @@ const IDLE_THRESHOLD_SECS: u64 = 300;
 
 #[derive(Clone, Serialize)]
 pub struct SessionClosedPayload {
-    pub session_id: String,
-    pub app_name: String,
+    pub session_id:    String,
+    pub app_name:      String,
     pub duration_secs: i64,
+    /// Top window titles seen during this session (deduplicated, most-frequent first).
+    pub window_titles: Vec<String>,
+    /// Git branch active when the session opened (if detected).
+    pub git_branch:    Option<String>,
+    /// Short git commit message active when the session opened (if detected).
+    pub git_commit:    Option<String>,
 }
 
 pub fn start_watcher(db: Database, user_id: String, app: AppHandle) {
@@ -70,6 +79,10 @@ fn run(db: Database, user_id: String, app: AppHandle) {
     let mut current_process: Option<String> = None;
     let mut session_paused = false;
     let mut pending_switch: Option<(String, Instant)> = None;
+    // title → how many ticks it was seen (for ranking)
+    let mut title_counts: HashMap<String, u32> = HashMap::new();
+    let mut session_git_branch: Option<String> = None;
+    let mut session_git_commit: Option<String> = None;
 
     loop {
         let idle_secs = seconds_since_last_input();
@@ -81,6 +94,12 @@ fn run(db: Database, user_id: String, app: AppHandle) {
             Ok(win) => {
                 let process = win.app_name.clone();
                 let is_whitelisted = rt.block_on(is_app_whitelisted(&db, &user_id, &process));
+
+                // Track window title for active session.
+                let title = win.title.trim().to_string();
+                if !title.is_empty() && current_session_id.is_some() {
+                    *title_counts.entry(title).or_insert(0) += 1;
+                }
 
                 if is_idle {
                     pending_switch = None;
@@ -112,6 +131,11 @@ fn run(db: Database, user_id: String, app: AppHandle) {
                             if let Ok(sid) = rt.block_on(open_session(&db, &user_id, &process)) {
                                 let _ = app.emit("flow:session-opened", sid.clone());
                                 current_session_id = Some(sid);
+                                // Capture git context and reset title tracking for new session.
+                                title_counts.clear();
+                                let (branch, commit) = detect_git_context(&win.process_path);
+                                session_git_branch = branch;
+                                session_git_commit = commit;
                             }
                         }
                         current_process = Some(process);
@@ -132,7 +156,9 @@ fn run(db: Database, user_id: String, app: AppHandle) {
                                 if effective_grace == 0 {
                                     pending_switch = None;
                                     commit_switch(&rt, &db, &user_id, &app, &mut current_session_id,
-                                                  &mut current_process, &process, is_whitelisted);
+                                                  &mut current_process, &process, is_whitelisted,
+                                                  &mut title_counts, &mut session_git_branch,
+                                                  &mut session_git_commit, &win.process_path);
                                 } else {
                                     pending_switch = Some((process.clone(), Instant::now()));
                                 }
@@ -142,7 +168,9 @@ fn run(db: Database, user_id: String, app: AppHandle) {
                                     if switched_at.elapsed().as_secs() >= effective_grace {
                                         pending_switch = None;
                                         commit_switch(&rt, &db, &user_id, &app, &mut current_session_id,
-                                                      &mut current_process, &process, is_whitelisted);
+                                                      &mut current_process, &process, is_whitelisted,
+                                                      &mut title_counts, &mut session_git_branch,
+                                                      &mut session_git_commit, &win.process_path);
                                     }
                                     // else: still in grace — keep waiting.
                                 } else {
@@ -167,6 +195,10 @@ fn run(db: Database, user_id: String, app: AppHandle) {
                         if let Some(sid) = current_session_id.take() {
                             let threshold = rt.block_on(read_setting_i64(&db, &user_id, "auto_merge_threshold"))
                                 .unwrap_or(120);
+                            let window_titles = top_titles(&title_counts, 8);
+                            let git_branch = session_git_branch.take();
+                            let git_commit = session_git_commit.take();
+                            title_counts.clear();
                             if let Some((surviving_id, app_name, dur)) =
                                 rt.block_on(close_and_merge(&db, &sid, threshold))
                             {
@@ -176,6 +208,9 @@ fn run(db: Database, user_id: String, app: AppHandle) {
                                         session_id: surviving_id,
                                         app_name,
                                         duration_secs: dur,
+                                        window_titles,
+                                        git_branch,
+                                        git_commit,
                                     },
                                 );
                             }
@@ -201,9 +236,16 @@ fn commit_switch(
     current_process: &mut Option<String>,
     new_process: &str,
     is_whitelisted: bool,
+    title_counts: &mut HashMap<String, u32>,
+    session_git_branch: &mut Option<String>,
+    session_git_commit: &mut Option<String>,
+    new_process_path: &Path,
 ) {
     if let Some(sid) = current_session_id.take() {
         let threshold = rt.block_on(read_setting_i64(db, user_id, "auto_merge_threshold")).unwrap_or(120);
+        let window_titles = top_titles(title_counts, 8);
+        let git_branch = session_git_branch.clone();
+        let git_commit = session_git_commit.clone();
         if let Some((surviving_id, app_name, dur)) =
             rt.block_on(close_and_merge(db, &sid, threshold))
         {
@@ -213,10 +255,19 @@ fn commit_switch(
                     session_id: surviving_id,
                     app_name,
                     duration_secs: dur,
+                    window_titles,
+                    git_branch,
+                    git_commit,
                 },
             );
         }
     }
+    // Reset context for the incoming session.
+    title_counts.clear();
+    let (branch, commit) = detect_git_context(new_process_path);
+    *session_git_branch = branch;
+    *session_git_commit = commit;
+
     if is_whitelisted {
         if let Ok(sid) = rt.block_on(open_session(db, user_id, new_process)) {
             let _ = app.emit("flow:session-opened", sid.clone());
@@ -224,6 +275,60 @@ fn commit_switch(
         }
     }
     *current_process = Some(new_process.to_string());
+}
+
+// ── Git context detection ─────────────────────────────────────────────────────
+
+/// Walk up from the process executable path to find a `.git` directory,
+/// then query branch and latest commit message.
+fn detect_git_context(process_path: &Path) -> (Option<String>, Option<String>) {
+    let start = process_path.parent().unwrap_or(process_path);
+    let mut dir = start;
+    for _ in 0..8 {
+        if dir.join(".git").exists() {
+            let branch = Command::new("git")
+                .args(["-C", &dir.to_string_lossy(), "branch", "--show-current"])
+                .output()
+                .ok()
+                .and_then(|o| if o.status.success() {
+                    Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+                } else { None })
+                .filter(|s| !s.is_empty());
+
+            let commit = Command::new("git")
+                .args(["-C", &dir.to_string_lossy(), "log", "--oneline", "-1", "--format=%s"])
+                .output()
+                .ok()
+                .and_then(|o| if o.status.success() {
+                    Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+                } else { None })
+                .filter(|s| !s.is_empty());
+
+            return (branch, commit);
+        }
+        match dir.parent() {
+            Some(p) => dir = p,
+            None => break,
+        }
+    }
+    (None, None)
+}
+
+/// Return the top-N window titles sorted by frequency, filtering out noise.
+fn top_titles(counts: &HashMap<String, u32>, n: usize) -> Vec<String> {
+    let mut pairs: Vec<(&String, &u32)> = counts
+        .iter()
+        .filter(|(t, _)| {
+            let lower = t.to_ascii_lowercase();
+            // Skip generic/useless titles.
+            !lower.is_empty()
+                && lower != "flow tracker"
+                && lower != "flowtracker"
+                && !lower.starts_with("untitled")
+        })
+        .collect();
+    pairs.sort_by(|a, b| b.1.cmp(a.1));
+    pairs.iter().take(n).map(|(t, _)| (*t).clone()).collect()
 }
 
 // ── MongoDB helpers ────────────────────────────────────────────────────────────

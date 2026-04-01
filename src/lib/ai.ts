@@ -98,11 +98,18 @@ function getModel(config: AIConfig) {
 }
 
 /**
- * Suggests a short work session name from a list of app usage info.
+ * Suggests a short work session name from app usage + rich context.
+ * window_titles: titles seen during session (e.g. "auth.ts — my-project — VS Code").
+ * git_branch / git_commit: optional git context detected from process path.
  * Returns null if AI is not configured or fails.
  */
 export async function suggestWorkSessionName(
   appUsages: { app: string; duration_secs: number }[],
+  context?: {
+    window_titles?: string[];
+    git_branch?: string | null;
+    git_commit?: string | null;
+  },
 ): Promise<string | null> {
   const config = await loadAIConfig();
   const model = getModel(config);
@@ -118,8 +125,30 @@ export async function suggestWorkSessionName(
     .map(({ app, duration_secs }) => `${app} (${Math.round(duration_secs / 60)} min)`)
     .join(", ");
 
-  const prompt = `Given these apps used and their durations: ${appList}
+  const parts: string[] = [`Apps used: ${appList}`];
+
+  if (context?.window_titles?.length) {
+    // Keep top 6 titles; strip repetitive suffixes like " — VS Code"
+    const cleanTitles = context.window_titles
+      .slice(0, 6)
+      .map(t => t.replace(/\s[—–-]\s*(Visual Studio Code|VS Code|Code|Google Chrome|Firefox|Safari)$/i, "").trim())
+      .filter(Boolean);
+    if (cleanTitles.length) parts.push(`Window titles: ${cleanTitles.join(" | ")}`);
+  }
+
+  if (context?.git_branch) {
+    parts.push(`Git branch: ${context.git_branch}`);
+  }
+  if (context?.git_commit) {
+    parts.push(`Last commit: ${context.git_commit}`);
+  }
+
+  const contextBlock = parts.join("\n");
+
+  const prompt = `You are a concise work-session naming assistant. /no_think
+${contextBlock}
 Suggest a single short task name (3-6 words, no quotes, no punctuation at end) that describes what the user was working on.
+Prefer specific names based on file/branch names over generic app names.
 Reply with only the task name, nothing else.`;
 
   console.log("[AI] prompt:", prompt);

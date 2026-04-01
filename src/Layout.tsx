@@ -3,11 +3,15 @@ import { useEffect, useState, useCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
 import { nameSession, listProjects, listAllWorkSessions, createWorkSession, assignWorkSessionProject, addSessionToWorkSession, Project, WorkSession } from "./api";
+import { suggestWorkSessionName } from "./lib/ai";
 
 interface SessionClosedPayload {
   session_id: string;
   app_name: string;
   duration_secs: number;
+  window_titles?: string[];
+  git_branch?: string | null;
+  git_commit?: string | null;
 }
 
 type ToastMode = "new" | "existing";
@@ -51,15 +55,36 @@ export default function Layout() {
   }, []);
 
   useEffect(() => {
-    const unlisten = listen<SessionClosedPayload>("flow:session-closed", ({ payload }) => {
+    const unlisten = listen<SessionClosedPayload>("flow:session-closed", async ({ payload }) => {
       if (payload.duration_secs < 60) return;
+
+      // Show toast immediately with empty input, then fill in AI suggestion.
       setToasts([{
         ...payload,
         input: "", project_id: null, showProjects: false,
         mode: "new", existingWsId: null,
       }]);
-      // Refresh work sessions list so newly created ones appear
       listAllWorkSessions().then(setWorkSessions).catch(console.error);
+
+      // Auto-name in background — update input when ready.
+      const suggestion = await suggestWorkSessionName(
+        [{ app: payload.app_name, duration_secs: payload.duration_secs }],
+        {
+          window_titles: payload.window_titles,
+          git_branch: payload.git_branch,
+          git_commit: payload.git_commit,
+        },
+      ).catch(() => null);
+
+      if (suggestion) {
+        setToasts(prev =>
+          prev.map(t =>
+            t.session_id === payload.session_id && t.input === ""
+              ? { ...t, input: suggestion }
+              : t
+          )
+        );
+      }
     });
     return () => { unlisten.then((f) => f()); };
   }, []);
