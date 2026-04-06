@@ -118,6 +118,12 @@ export const deleteSession = (id: string): Promise<void> =>
 export const stopActiveSession = (): Promise<void> =>
   invoke("stop_active_session");
 
+export const pauseTracking = (): Promise<void> =>
+  invoke("pause_tracking");
+
+export const resumeTracking = (): Promise<void> =>
+  invoke("resume_tracking");
+
 export const getSessionsForExport = (fromDate: string, toDate: string): Promise<Session[]> =>
   invoke("get_sessions_for_export", { fromDate, toDate });
 

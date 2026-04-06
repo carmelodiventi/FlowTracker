@@ -99,6 +99,13 @@ export default function ExportModal({ onClose }: Props) {
     });
   }
 
+  // Build wsId -> task/work-session display name for export grouping
+  const wsNameMap = new Map<string, string>();
+  for (const ws of allWorkSessions) {
+    const name = ws.name?.trim();
+    if (name) wsNameMap.set(ws.id, name);
+  }
+
   function getRange(): [string, string] {
     if (preset === "week")  return weekRange();
     if (preset === "month") return monthRange();
@@ -145,7 +152,9 @@ export default function ExportModal({ onClose }: Props) {
   function buildPDF(sessions: Session[], from: string, to: string, projectLabel: string, clientLabel: string): Uint8Array {
     const groups = new Map<string, Session[]>();
     for (const s of sessions) {
-      const key = s.task_name ?? "Unlabelled";
+      const workSessionName = s.work_session_id ? wsNameMap.get(s.work_session_id) : undefined;
+      const taskName = s.task_name?.trim();
+      const key = workSessionName ?? (taskName ? taskName : "Unlabelled");
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key)!.push(s);
     }

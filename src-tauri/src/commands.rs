@@ -411,6 +411,58 @@ pub async fn stop_active_session(
 }
 
 #[tauri::command]
+pub async fn pause_tracking(state: State<'_, MongoState>) -> Result<(), String> {
+    let col = state.db.collection::<Document>("sessions");
+    // Find and pause the active session for this user
+    let session = col.find_one(doc! {
+        "user_id": &state.user_id,
+        "status": "active"
+    }).await.map_err(|e| e.to_string())?;
+
+    let Some(doc) = session else {
+        return Ok(()); // nothing active to pause
+    };
+    let oid = doc.get_object_id("_id").map_err(|e| e.to_string())?;
+
+    col.update_one(
+        doc! { "_id": oid },
+        doc! { "$set": { "status": "idle" } },
+    ).await.map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn resume_tracking(state: State<'_, MongoState>) -> Result<(), String> {
+    let col = state.db.collection::<Document>("sessions");
+    // Find and resume the idle session for this user (most recent)
+    let session = col
+        .find(doc! {
+            "user_id": &state.user_id,
+            "status": "idle"
+        })
+        .sort(doc! { "start_time": -1_i32 })
+        .await
+        .map_err(|e| e.to_string())?;
+    
+    let mut cursor = session;
+    let doc = if cursor.advance().await.map_err(|e| e.to_string())? {
+        cursor.deserialize_current().map_err(|e| e.to_string())?
+    } else {
+        return Ok(()); // nothing paused to resume
+    };
+
+    let oid = doc.get_object_id("_id").map_err(|e| e.to_string())?;
+
+    col.update_one(
+        doc! { "_id": oid, "status": "idle" },
+        doc! { "$set": { "status": "active" } },
+    ).await.map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn daily_summary(
     state: State<'_, MongoState>, date: String,
 ) -> Result<Vec<AppSummary>, String> {

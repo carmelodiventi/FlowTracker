@@ -6,6 +6,8 @@ import {
   listSessionsForDate,
   deleteSession,
   stopActiveSession,
+  pauseTracking,
+  resumeTracking,
   listWorkSessions,
   createWorkSession,
   updateWorkSession,
@@ -125,6 +127,7 @@ export default function Dashboard() {
   const [invoiceDescWsId, setInvoiceDescWsId] = useState<string | null>(null);
   const [invoiceDescText, setInvoiceDescText] = useState<string>("");
   const [generatingInvoiceWsId, setGeneratingInvoiceWsId] = useState<string | null>(null);
+  const [isTrackingPaused, setIsTrackingPaused] = useState(false);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isToday = date === todayISO();
@@ -941,7 +944,53 @@ export default function Dashboard() {
                             </span>
                             <button
                               onClick={async () => {
+                                if (isTrackingPaused) {
+                                  await resumeTracking().catch(console.error);
+                                  setIsTrackingPaused(false);
+                                } else {
+                                  await pauseTracking().catch(console.error);
+                                  setIsTrackingPaused(true);
+                                }
+                              }}
+                              title={isTrackingPaused ? "Resume tracking" : "Pause tracking"}
+                              style={{
+                                background: isTrackingPaused ? "rgba(255,184,28,0.1)" : "rgba(88,166,255,0.1)",
+                                border: isTrackingPaused ? "1px solid rgba(255,184,28,0.3)" : "1px solid rgba(88,166,255,0.3)",
+                                borderRadius: 6,
+                                padding: "4px 10px",
+                                color: isTrackingPaused ? "#ffc107" : "#58a6ff",
+                                cursor: "pointer",
+                                fontSize: 11,
+                                fontWeight: 700,
+                                letterSpacing: "0.04em",
+                                flexShrink: 0,
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 4,
+                                transition: "background 0.12s",
+                              }}
+                              onMouseEnter={(e) => {
+                                if (isTrackingPaused) {
+                                  e.currentTarget.style.background = "rgba(255,184,28,0.2)";
+                                } else {
+                                  e.currentTarget.style.background = "rgba(88,166,255,0.2)";
+                                }
+                              }}
+                              onMouseLeave={(e) => {
+                                if (isTrackingPaused) {
+                                  e.currentTarget.style.background = "rgba(255,184,28,0.1)";
+                                } else {
+                                  e.currentTarget.style.background = "rgba(88,166,255,0.1)";
+                                }
+                              }}
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: 13 }}>{isTrackingPaused ? "play_circle" : "pause_circle"}</span>
+                              {isTrackingPaused ? t("dashboard.resume") : t("dashboard.pause")}
+                            </button>
+                            <button
+                              onClick={async () => {
                                 await stopActiveSession().catch(console.error);
+                                setIsTrackingPaused(false);
                                 await load();
                               }}
                               title="Stop tracking"
