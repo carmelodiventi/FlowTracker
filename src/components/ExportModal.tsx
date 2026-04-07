@@ -4,7 +4,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
-import { getSessionsForExport, listAllWorkSessions, listProjectsDetail, Session, WorkSession, ProjectDetail } from "../api";
+import { getSessionsForExport, listAllWorkSessions, listProjectsDetail, getSetting, Session, WorkSession, ProjectDetail } from "../api";
 
 // ─── Design tokens (matching Stitch/dashboard palette) ────────────────────────
 const C = {
@@ -64,10 +64,25 @@ export default function ExportModal({ onClose }: Props) {
   const [projects,        setProjects]        = useState<ProjectDetail[]>([]);
   const [filterProject,   setFilterProject]   = useState<string>(""); // project id or ""
   const [filterClient,    setFilterClient]    = useState<string>(""); // client id or ""
+  const [includeInvoiceMeta, setIncludeInvoiceMeta] = useState(false);
+  const [invoiceTitle, setInvoiceTitle] = useState("Invoice Draft");
+  const [invoiceNumber, setInvoiceNumber] = useState("");
+  const [bankDetails, setBankDetails] = useState("");
 
   useEffect(() => {
     listAllWorkSessions().then(setAllWorkSessions).catch(console.error);
     listProjectsDetail().then(setProjects).catch(console.error);
+
+    Promise.all([
+      getSetting("invoice_meta_enabled").catch(() => "false"),
+      getSetting("invoice_title_default").catch(() => "Invoice Draft"),
+      getSetting("bank_details_default").catch(() => ""),
+    ]).then(([enabled, title, bank]) => {
+      setIncludeInvoiceMeta(enabled === "true" || enabled === "1");
+      setInvoiceTitle(title || "Invoice Draft");
+      setInvoiceNumber("");
+      setBankDetails(bank || "");
+    });
   }, []);
 
   // Derive unique clients from projects
@@ -137,7 +152,12 @@ export default function ExportModal({ onClose }: Props) {
         return true;
       });
 
-      const bytes = buildPDF(filtered, from, to, projectLabel, clientLabel);
+      const bytes = buildPDF(filtered, from, to, projectLabel, clientLabel, {
+        includeInvoiceMeta,
+        invoiceTitle: invoiceTitle.trim(),
+        invoiceNumber: invoiceNumber.trim(),
+        bankDetails: bankDetails.trim(),
+      });
       const path = await save({
         defaultPath: filename,
         filters: [{ name: "PDF Document", extensions: ["pdf"] }],
@@ -149,7 +169,14 @@ export default function ExportModal({ onClose }: Props) {
     finally { setLoading(false); }
   }
 
-  function buildPDF(sessions: Session[], from: string, to: string, projectLabel: string, clientLabel: string): Uint8Array {
+  function buildPDF(
+    sessions: Session[],
+    from: string,
+    to: string,
+    projectLabel: string,
+    clientLabel: string,
+    invoiceMeta: { includeInvoiceMeta: boolean; invoiceTitle: string; invoiceNumber: string; bankDetails: string }
+  ): Uint8Array {
     const groups = new Map<string, Session[]>();
     for (const s of sessions) {
       const workSessionName = s.work_session_id ? wsNameMap.get(s.work_session_id) : undefined;
@@ -161,8 +188,11 @@ export default function ExportModal({ onClose }: Props) {
     const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
     const W = doc.internal.pageSize.getWidth();
     let y = 20;
+    const reportTitle = invoiceMeta.includeInvoiceMeta
+      ? (invoiceMeta.invoiceTitle || "Invoice Draft")
+      : "Flow Tracker — Time Report";
     doc.setFont("helvetica", "bold"); doc.setFontSize(18);
-    doc.text("Flow Tracker — Time Report", W / 2, y, { align: "center" });
+    doc.text(reportTitle, W / 2, y, { align: "center" });
     y += 8;
     doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.setTextColor(100);
     doc.text(`Period: ${fmtDate(from + "T00:00:00")} – ${fmtDate(to + "T00:00:00")}`, W / 2, y, { align: "center" });
@@ -171,6 +201,23 @@ export default function ExportModal({ onClose }: Props) {
       const filterStr = [clientLabel && `Client: ${clientLabel}`, projectLabel && `Project: ${projectLabel}`].filter(Boolean).join("  |  ");
       doc.text(filterStr, W / 2, y, { align: "center" });
       y += 5;
+    }
+    if (invoiceMeta.includeInvoiceMeta) {
+      if (invoiceMeta.invoiceNumber) {
+        doc.text(`Invoice #: ${invoiceMeta.invoiceNumber}`, W / 2, y, { align: "center" });
+        y += 5;
+      }
+      if (invoiceMeta.bankDetails) {
+        doc.setFillColor(245, 247, 250);
+        const details = `Bank details: ${invoiceMeta.bankDetails}`;
+        const lines = doc.splitTextToSize(details, W - 34);
+        const boxH = Math.max(10, (lines.length * 4.4) + 4);
+        doc.roundedRect(14, y - 2, W - 28, boxH, 1.2, 1.2, "F");
+        doc.setTextColor(80);
+        doc.text(lines, 17, y + 2);
+        doc.setTextColor(0);
+        y += boxH + 2;
+      }
     }
     y += 7; doc.setTextColor(0);
     let grand = 0;
@@ -373,6 +420,59 @@ export default function ExportModal({ onClose }: Props) {
                 </select>
               </div>
             </div>
+          </div>
+
+          {/* Optional invoice metadata */}
+          <div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+              <div style={{ fontFamily: "Roboto Mono, monospace", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", color: C.outline }}>
+                Invoice Meta <span style={{ color: C.outlineVar }}>(Optional)</span>
+              </div>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 11, color: C.onSurfaceVar }}>
+                <input
+                  type="checkbox"
+                  checked={includeInvoiceMeta}
+                  onChange={(e) => setIncludeInvoiceMeta(e.target.checked)}
+                  style={{ accentColor: C.primaryCont }}
+                />
+                Include in PDF
+              </label>
+            </div>
+
+            {includeInvoiceMeta && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, color: C.onSurfaceVar, marginBottom: 4 }}>Invoice Title</label>
+                  <input
+                    type="text"
+                    value={invoiceTitle}
+                    onChange={(e) => setInvoiceTitle(e.target.value)}
+                    placeholder="Invoice Draft"
+                    style={{ ...selectStyle, fontFamily: "Roboto Mono, monospace" }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, color: C.onSurfaceVar, marginBottom: 4 }}>Invoice Number</label>
+                  <input
+                    type="text"
+                    value={invoiceNumber}
+                    onChange={(e) => setInvoiceNumber(e.target.value)}
+                    placeholder="e.g. INV-2026-0042"
+                    style={{ ...selectStyle, fontFamily: "Roboto Mono, monospace" }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, color: C.onSurfaceVar, marginBottom: 4 }}>Bank Details</label>
+                  <textarea
+                    value={bankDetails}
+                    onChange={(e) => setBankDetails(e.target.value)}
+                    placeholder="e.g. Beneficiary, IBAN, SWIFT/BIC, bank name"
+                    rows={3}
+                    style={{ ...selectStyle, resize: "vertical", fontFamily: "Roboto Mono, monospace" }}
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Filename hint */}

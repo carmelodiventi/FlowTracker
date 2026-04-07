@@ -77,6 +77,10 @@ export default function Settings() {
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
   const [aiSaved, setAiSaved] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
+  const [invoiceDefaultsEnabled, setInvoiceDefaultsEnabled] = useState(false);
+  const [defaultInvoiceTitle, setDefaultInvoiceTitle] = useState("Invoice Draft");
+  const [defaultBankDetails, setDefaultBankDetails] = useState("");
+  const [invoiceSaved, setInvoiceSaved] = useState(false);
 
   // Language picker state — read the currently active language
   const [currentLang, setCurrentLang] = useState(i18n.language?.slice(0, 2) ?? "en");
@@ -99,6 +103,16 @@ export default function Settings() {
       setAiProvider((prov as AIProvider) || "none");
       setAiApiKey(key || "");
       setAiOllamaModel(model || "llama3.2");
+    });
+
+    Promise.all([
+      getSetting("invoice_meta_enabled").catch(() => "false"),
+      getSetting("invoice_title_default").catch(() => "Invoice Draft"),
+      getSetting("bank_details_default").catch(() => ""),
+    ]).then(([enabled, title, bank]) => {
+      setInvoiceDefaultsEnabled(enabled === "true" || enabled === "1");
+      setDefaultInvoiceTitle(title || "Invoice Draft");
+      setDefaultBankDetails(bank || "");
     });
   }, []);
 
@@ -128,6 +142,16 @@ export default function Settings() {
     await setSetting(key, values[key] ?? "").catch(console.error);
     setSaved((prev) => ({ ...prev, [key]: true }));
     setTimeout(() => setSaved((prev) => ({ ...prev, [key]: false })), 1500);
+  };
+
+  const handleSaveInvoiceDefaults = async () => {
+    await Promise.all([
+      setSetting("invoice_meta_enabled", invoiceDefaultsEnabled ? "true" : "false"),
+      setSetting("invoice_title_default", defaultInvoiceTitle),
+      setSetting("bank_details_default", defaultBankDetails),
+    ]).catch(console.error);
+    setInvoiceSaved(true);
+    setTimeout(() => setInvoiceSaved(false), 1500);
   };
 
   return (
@@ -253,6 +277,71 @@ export default function Settings() {
             ))}
           </div>
         )}
+
+        {/* ── Invoice Defaults ───────────────────────────────────────────── */}
+        <div style={{ marginTop: 40, maxWidth: 560 }}>
+          <div style={{ marginBottom: 16 }}>
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: "#f0f6fc", margin: "0 0 4px" }}>
+              Invoice Defaults
+            </h2>
+            <p style={{ fontSize: 13, color: "#8b919d", margin: 0 }}>
+              Save invoice metadata defaults for Export.
+            </p>
+          </div>
+
+          <div style={{ background: "#181c22", border: "1px solid rgba(65,71,82,0.3)", borderRadius: 6, padding: "20px 24px", display: "flex", flexDirection: "column", gap: 14 }}>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, color: "#c9d1d9" }}>
+              <input
+                type="checkbox"
+                checked={invoiceDefaultsEnabled}
+                onChange={(e) => setInvoiceDefaultsEnabled(e.target.checked)}
+                style={{ accentColor: "#58a6ff" }}
+              />
+              Enable invoice metadata by default in Export
+            </label>
+
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#c9d1d9", marginBottom: 6 }}>Default Invoice Title</div>
+              <input
+                type="text"
+                value={defaultInvoiceTitle}
+                onChange={(e) => setDefaultInvoiceTitle(e.target.value)}
+                placeholder="Invoice Draft"
+                style={{
+                  width: "100%", boxSizing: "border-box", background: "#10141a", border: "1px solid #414752",
+                  borderRadius: 4, padding: "8px 12px", color: "#dfe2eb", fontSize: 13, outline: "none",
+                  fontFamily: "Roboto Mono, monospace", marginBottom: 12,
+                }}
+              />
+
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#c9d1d9", marginBottom: 6 }}>Default Bank Details</div>
+              <textarea
+                value={defaultBankDetails}
+                onChange={(e) => setDefaultBankDetails(e.target.value)}
+                placeholder="Beneficiary, IBAN, SWIFT/BIC, bank name"
+                rows={4}
+                style={{
+                  width: "100%", boxSizing: "border-box", background: "#10141a", border: "1px solid #414752",
+                  borderRadius: 4, padding: "8px 12px", color: "#dfe2eb", fontSize: 13, outline: "none", resize: "vertical",
+                  fontFamily: "Roboto Mono, monospace",
+                }}
+              />
+            </div>
+
+            <div>
+              <button
+                onClick={handleSaveInvoiceDefaults}
+                style={{
+                  background: invoiceSaved ? "#27a640" : "#58a6ff", color: "#001c38", border: "none",
+                  borderRadius: 4, padding: "9px 20px", fontWeight: 700, fontSize: 12, cursor: "pointer",
+                  letterSpacing: "0.05em", textTransform: "uppercase", transition: "background 0.2s",
+                }}
+              >
+                {invoiceSaved ? t("settings.saved") : t("settings.save")}
+              </button>
+            </div>
+          </div>
+        </div>
 
         {/* ── AI Integration ─────────────────────────────────────────────── */}
         <div style={{ marginTop: 40, maxWidth: 560 }}>
