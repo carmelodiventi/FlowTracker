@@ -412,6 +412,38 @@ pub async fn stop_active_session(
 
 #[tauri::command]
 pub async fn pause_tracking(state: State<'_, MongoState>) -> Result<(), String> {
+    let col = state.db.collection::<Document>("sessions");
+    let now = crate::watcher::iso_now();
+
+    // Close any currently active session immediately so tracking stops at once.
+    let mut cursor = col.find(doc! {
+        "user_id": &state.user_id,
+        "status": "active"
+    }).await.map_err(|e| e.to_string())?;
+
+    while cursor.advance().await.map_err(|e| e.to_string())? {
+        let d = cursor.deserialize_current().map_err(|e| e.to_string())?;
+        let oid = match d.get_object_id("_id") {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let start = d.get_str("start_time").unwrap_or("").to_string();
+        let duration = if start.is_empty() {
+            0i64
+        } else {
+            let start_dt = chrono::DateTime::parse_from_rfc3339(&start)
+                .map(|t| t.timestamp())
+                .unwrap_or(0);
+            let now_ts = chrono::Utc::now().timestamp();
+            (now_ts - start_dt).max(0)
+        };
+
+        col.update_one(
+            doc! { "_id": oid },
+            doc! { "$set": { "status": "closed", "end_time": &now, "duration": duration } },
+        ).await.map_err(|e| e.to_string())?;
+    }
+
     state.db.collection::<Document>("settings")
         .update_one(
             doc! { "_id": format!("{}::pause_tracking", state.user_id) },

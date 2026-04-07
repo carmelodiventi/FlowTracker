@@ -640,6 +640,57 @@ export default function Dashboard() {
                   </span>
                 )}
               </div>
+              {isToday && (
+                <div style={{ marginTop: 14 }}>
+                  <button
+                    onClick={async () => {
+                      if (isTrackingPaused) {
+                        await resumeTracking().catch(console.error);
+                        setIsTrackingPaused(false);
+                      } else {
+                        await pauseTracking().catch(console.error);
+                        setIsTrackingPaused(true);
+                      }
+                      await load();
+                    }}
+                    title={isTrackingPaused ? "Resume tracking" : "Pause tracking"}
+                    style={{
+                      background: isTrackingPaused ? "rgba(255,184,28,0.1)" : "rgba(88,166,255,0.1)",
+                      border: isTrackingPaused ? "1px solid rgba(255,184,28,0.3)" : "1px solid rgba(88,166,255,0.3)",
+                      borderRadius: 6,
+                      padding: "6px 12px",
+                      color: isTrackingPaused ? "#ffc107" : "#58a6ff",
+                      cursor: "pointer",
+                      fontSize: 11,
+                      fontWeight: 700,
+                      letterSpacing: "0.04em",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      transition: "background 0.12s",
+                    }}
+                    onMouseEnter={(e) => {
+                      if (isTrackingPaused) {
+                        e.currentTarget.style.background = "rgba(255,184,28,0.2)";
+                      } else {
+                        e.currentTarget.style.background = "rgba(88,166,255,0.2)";
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (isTrackingPaused) {
+                        e.currentTarget.style.background = "rgba(255,184,28,0.1)";
+                      } else {
+                        e.currentTarget.style.background = "rgba(88,166,255,0.1)";
+                      }
+                    }}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+                      {isTrackingPaused ? "play_circle" : "pause_circle"}
+                    </span>
+                    {isTrackingPaused ? t("dashboard.resume") : t("dashboard.pause")}
+                  </button>
+                </div>
+              )}
             </section>
 
             {/* ── Application Distribution ── */}
@@ -942,51 +993,6 @@ export default function Dashboard() {
                             >
                               {fmtDuration(liveSecs)}
                             </span>
-                            <button
-                              onClick={async () => {
-                                if (isTrackingPaused) {
-                                  await resumeTracking().catch(console.error);
-                                  setIsTrackingPaused(false);
-                                } else {
-                                  await pauseTracking().catch(console.error);
-                                  setIsTrackingPaused(true);
-                                }
-                              }}
-                              title={isTrackingPaused ? "Resume tracking" : "Pause tracking"}
-                              style={{
-                                background: isTrackingPaused ? "rgba(255,184,28,0.1)" : "rgba(88,166,255,0.1)",
-                                border: isTrackingPaused ? "1px solid rgba(255,184,28,0.3)" : "1px solid rgba(88,166,255,0.3)",
-                                borderRadius: 6,
-                                padding: "4px 10px",
-                                color: isTrackingPaused ? "#ffc107" : "#58a6ff",
-                                cursor: "pointer",
-                                fontSize: 11,
-                                fontWeight: 700,
-                                letterSpacing: "0.04em",
-                                flexShrink: 0,
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 4,
-                                transition: "background 0.12s",
-                              }}
-                              onMouseEnter={(e) => {
-                                if (isTrackingPaused) {
-                                  e.currentTarget.style.background = "rgba(255,184,28,0.2)";
-                                } else {
-                                  e.currentTarget.style.background = "rgba(88,166,255,0.2)";
-                                }
-                              }}
-                              onMouseLeave={(e) => {
-                                if (isTrackingPaused) {
-                                  e.currentTarget.style.background = "rgba(255,184,28,0.1)";
-                                } else {
-                                  e.currentTarget.style.background = "rgba(88,166,255,0.1)";
-                                }
-                              }}
-                            >
-                              <span className="material-symbols-outlined" style={{ fontSize: 13 }}>{isTrackingPaused ? "play_circle" : "pause_circle"}</span>
-                              {isTrackingPaused ? t("dashboard.resume") : t("dashboard.pause")}
-                            </button>
                             <button
                               onClick={async () => {
                                 await stopActiveSession().catch(console.error);
