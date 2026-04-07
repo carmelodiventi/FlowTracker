@@ -81,6 +81,7 @@ export default function Settings() {
   const [defaultInvoiceTitle, setDefaultInvoiceTitle] = useState("Invoice Draft");
   const [defaultBankDetails, setDefaultBankDetails] = useState("");
   const [defaultHourlyRate, setDefaultHourlyRate] = useState("");
+  const [defaultVatRate, setDefaultVatRate] = useState("");
   const [invoiceSaved, setInvoiceSaved] = useState(false);
 
   // Language picker state — read the currently active language
@@ -111,11 +112,13 @@ export default function Settings() {
       getSetting("invoice_title_default").catch(() => "Invoice Draft"),
       getSetting("bank_details_default").catch(() => ""),
       getSetting("hourly_rate_default").catch(() => ""),
-    ]).then(([enabled, title, bank, rate]) => {
+      getSetting("vat_rate_default").catch(() => ""),
+    ]).then(([enabled, title, bank, rate, vat]) => {
       setInvoiceDefaultsEnabled(enabled === "true" || enabled === "1");
       setDefaultInvoiceTitle(title || "Invoice Draft");
       setDefaultBankDetails(bank || "");
       setDefaultHourlyRate(rate || "");
+      setDefaultVatRate(vat || "");
     });
   }, []);
 
@@ -153,6 +156,7 @@ export default function Settings() {
       setSetting("invoice_title_default", defaultInvoiceTitle),
       setSetting("bank_details_default", defaultBankDetails),
       setSetting("hourly_rate_default", defaultHourlyRate),
+      setSetting("vat_rate_default", defaultVatRate),
     ]).catch(console.error);
     setInvoiceSaved(true);
     setTimeout(() => setInvoiceSaved(false), 1500);
@@ -337,6 +341,19 @@ export default function Settings() {
                 value={defaultHourlyRate}
                 onChange={(e) => setDefaultHourlyRate(e.target.value)}
                 placeholder="e.g., $50/hr or €45/h"
+                style={{
+                  width: "100%", boxSizing: "border-box", background: "#10141a", border: "1px solid #414752",
+                  borderRadius: 4, padding: "8px 12px", color: "#dfe2eb", fontSize: 13, outline: "none",
+                  fontFamily: "Roboto Mono, monospace", marginBottom: 12,
+                }}
+              />
+
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#c9d1d9", marginBottom: 6 }}>Default VAT Rate (optional)</div>
+              <input
+                type="text"
+                value={defaultVatRate}
+                onChange={(e) => setDefaultVatRate(e.target.value)}
+                placeholder="e.g., 20% or 19%"
                 style={{
                   width: "100%", boxSizing: "border-box", background: "#10141a", border: "1px solid #414752",
                   borderRadius: 4, padding: "8px 12px", color: "#dfe2eb", fontSize: 13, outline: "none",
