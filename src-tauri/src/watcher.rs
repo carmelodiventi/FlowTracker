@@ -90,6 +90,29 @@ fn run(db: Database, user_id: String, app: AppHandle) {
         let grace_secs = rt.block_on(read_setting_i64(&db, &user_id, "focus_grace_period"))
             .unwrap_or(120).max(0) as u64;
 
+        // Check if tracking is paused globally
+        let is_paused = rt.block_on(read_setting_bool(&db, &user_id, "pause_tracking"));
+        if is_paused {
+            // If tracking is paused and we have an active session, close it
+            if let Some(ref sid) = current_session_id {
+                if !session_paused {
+                    rt.block_on(close_active_session(&db, sid));
+                    session_paused = true;
+                }
+            }
+            // Clear session state so nothing tracks while paused
+            current_session_id = None;
+            current_process = None;
+            title_counts.clear();
+            pending_switch = None;
+            // Skip all tracking logic and sleep
+            thread::sleep(POLL_INTERVAL);
+            continue;
+        } else if session_paused {
+            // If we were paused but now unpaused, reset the pause flag
+            session_paused = false;
+        }
+
         match get_active_window() {
             Ok(win) => {
                 let process = win.app_name.clone();
@@ -458,12 +481,43 @@ async fn read_setting_i64(db: &Database, user_id: &str, key: &str) -> Option<i64
     doc.get_str("value").ok()?.parse().ok()
 }
 
+async fn read_setting_bool(db: &Database, user_id: &str, key: &str) -> bool {
+    let scoped_id = format!("{}::{}", user_id, key);
+    let col = db.collection::<mongodb::bson::Document>("settings");
+    if let Ok(Some(doc)) = col.find_one(doc! { "_id": &scoped_id }).await {
+        if let Ok(v) = doc.get_str("value") {
+            return v == "true" || v == "1";
+        }
+    }
+    false
+}
+
 async fn pause_session(db: &Database, session_id: &str) {
     if let Ok(oid) = ObjectId::parse_str(session_id) {
         let col = db.collection::<mongodb::bson::Document>("sessions");
         let _ = col
             .update_one(doc! { "_id": oid }, doc! { "$set": { "status": "idle" } })
             .await;
+    }
+}
+
+async fn close_active_session(db: &Database, session_id: &str) {
+    if let Ok(oid) = ObjectId::parse_str(session_id) {
+        let col = db.collection::<mongodb::bson::Document>("sessions");
+        let now = iso_now();
+        if let Ok(Some(doc)) = col.find_one(doc! { "_id": oid }).await {
+            if let Ok(start) = doc.get_str("start_time") {
+                let start_dt = chrono::DateTime::parse_from_rfc3339(start)
+                    .map(|d| d.timestamp())
+                    .unwrap_or(0);
+                let now_ts = chrono::Utc::now().timestamp();
+                let duration = (now_ts - start_dt).max(0);
+                let _ = col.update_one(
+                    doc! { "_id": oid },
+                    doc! { "$set": { "end_time": &now, "duration": duration, "status": "closed" } },
+                ).await;
+            }
+        }
     }
 }
 

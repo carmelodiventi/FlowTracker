@@ -101,6 +101,21 @@ pub fn run() {
 
             app.manage(MongoState { db: db.clone(), user_id: user_id.clone() });
 
+            // Global tracking pause is runtime-scoped: always reset on app launch.
+            tauri::async_runtime::block_on(async {
+                let col = db.collection::<mongodb::bson::Document>("settings");
+                let scoped_id = format!("{}::pause_tracking", user_id);
+                let _ = col.update_one(
+                    mongodb::bson::doc! { "_id": &scoped_id },
+                    mongodb::bson::doc! { "$set": {
+                        "_id": &scoped_id,
+                        "user_id": &user_id,
+                        "key": "pause_tracking",
+                        "value": "false",
+                    }},
+                ).upsert(true).await;
+            });
+
             // ── System tray ───────────────────────────────────────────────────
             let menu = build_tray_menu(&handle)?;
             TrayIconBuilder::new()
@@ -153,6 +168,8 @@ pub fn run() {
             name_session,
             delete_session,
             stop_active_session,
+            pause_tracking,
+            resume_tracking,
             daily_summary,
             get_sessions_for_export,
             // Settings
