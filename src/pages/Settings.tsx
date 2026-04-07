@@ -78,7 +78,6 @@ export default function Settings() {
   const [aiSaved, setAiSaved] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
   const [invoiceDefaultsEnabled, setInvoiceDefaultsEnabled] = useState(false);
-  const [defaultInvoiceTitle, setDefaultInvoiceTitle] = useState("Invoice Draft");
   const [defaultBankDetails, setDefaultBankDetails] = useState("");
   const [defaultHourlyRate, setDefaultHourlyRate] = useState("");
   const [defaultVatRate, setDefaultVatRate] = useState("");
@@ -109,13 +108,11 @@ export default function Settings() {
 
     Promise.all([
       getSetting("invoice_meta_enabled").catch(() => "false"),
-      getSetting("invoice_title_default").catch(() => "Invoice Draft"),
       getSetting("bank_details_default").catch(() => ""),
       getSetting("hourly_rate_default").catch(() => ""),
       getSetting("vat_rate_default").catch(() => ""),
-    ]).then(([enabled, title, bank, rate, vat]) => {
+    ]).then(([enabled, bank, rate, vat]) => {
       setInvoiceDefaultsEnabled(enabled === "true" || enabled === "1");
-      setDefaultInvoiceTitle(title || "Invoice Draft");
       setDefaultBankDetails(bank || "");
       setDefaultHourlyRate(rate || "");
       setDefaultVatRate(vat || "");
@@ -153,7 +150,6 @@ export default function Settings() {
   const handleSaveInvoiceDefaults = async () => {
     await Promise.all([
       setSetting("invoice_meta_enabled", invoiceDefaultsEnabled ? "true" : "false"),
-      setSetting("invoice_title_default", defaultInvoiceTitle),
       setSetting("bank_details_default", defaultBankDetails),
       setSetting("hourly_rate_default", defaultHourlyRate),
       setSetting("vat_rate_default", defaultVatRate),
@@ -309,19 +305,6 @@ export default function Settings() {
             </label>
 
             <div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#c9d1d9", marginBottom: 6 }}>Default Invoice Title</div>
-              <input
-                type="text"
-                value={defaultInvoiceTitle}
-                onChange={(e) => setDefaultInvoiceTitle(e.target.value)}
-                placeholder="Invoice Draft"
-                style={{
-                  width: "100%", boxSizing: "border-box", background: "#10141a", border: "1px solid #414752",
-                  borderRadius: 4, padding: "8px 12px", color: "#dfe2eb", fontSize: 13, outline: "none",
-                  fontFamily: "Roboto Mono, monospace", marginBottom: 12,
-                }}
-              />
-
               <div style={{ fontSize: 13, fontWeight: 600, color: "#c9d1d9", marginBottom: 6 }}>Default Bank Details</div>
               <textarea
                 value={defaultBankDetails}

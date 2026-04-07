@@ -50,6 +50,18 @@ function monthRange(): [string, string] {
   ];
 }
 
+function parseLooseNumber(input: string): number {
+  const normalized = input.replace(/,/g, ".");
+  const match = normalized.match(/-?\d+(?:\.\d+)?/);
+  if (!match) return 0;
+  const value = Number(match[0]);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function fmtMoney(n: number): string {
+  return n.toFixed(2);
+}
+
 export default function ExportModal({ onClose }: Props) {
   const { t } = useTranslation();
   const [preset,     setPreset]     = useState<Preset>("month");
@@ -65,11 +77,8 @@ export default function ExportModal({ onClose }: Props) {
   const [filterProject,   setFilterProject]   = useState<string>(""); // project id or ""
   const [filterClient,    setFilterClient]    = useState<string>(""); // client id or ""
   const [includeInvoiceMeta, setIncludeInvoiceMeta] = useState(false);
-  const [invoiceTitle, setInvoiceTitle] = useState("Invoice Draft");
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [bankDetails, setBankDetails] = useState("");
-  const [invoiceTotalAmount, setInvoiceTotalAmount] = useState("");
-  const [invoiceVatAmount, setInvoiceVatAmount] = useState("");
   const [defaultHourlyRate, setDefaultHourlyRate] = useState("");
   const [defaultVatRate, setDefaultVatRate] = useState("");
 
@@ -79,19 +88,15 @@ export default function ExportModal({ onClose }: Props) {
 
     Promise.all([
       getSetting("invoice_meta_enabled").catch(() => "false"),
-      getSetting("invoice_title_default").catch(() => "Invoice Draft"),
       getSetting("bank_details_default").catch(() => ""),
       getSetting("hourly_rate_default").catch(() => ""),
       getSetting("vat_rate_default").catch(() => ""),
-    ]).then(([enabled, title, bank, rate, vat]) => {
+    ]).then(([enabled, bank, rate, vat]) => {
       setIncludeInvoiceMeta(enabled === "true" || enabled === "1");
-      setInvoiceTitle(title || "Invoice Draft");
       setInvoiceNumber("");
       setBankDetails(bank || "");
       setDefaultHourlyRate(rate || "");
       setDefaultVatRate(vat || "");
-      setInvoiceTotalAmount("");
-      setInvoiceVatAmount("");
     });
   }, []);
 
@@ -162,13 +167,24 @@ export default function ExportModal({ onClose }: Props) {
         return true;
       });
 
+      const totalSeconds = filtered.reduce((acc, s) => acc + (s.duration ?? 0), 0);
+      const totalHours = totalSeconds / 3600;
+      const hourlyRate = parseLooseNumber(defaultHourlyRate);
+      const vatRate = parseLooseNumber(defaultVatRate);
+      const subtotal = hourlyRate > 0 ? totalHours * hourlyRate : 0;
+      const vatAmount = subtotal > 0 && vatRate > 0 ? subtotal * (vatRate / 100) : 0;
+      const totalAmount = subtotal + vatAmount;
+
       const bytes = buildPDF(filtered, from, to, projectLabel, clientLabel, {
         includeInvoiceMeta,
-        invoiceTitle: invoiceTitle.trim(),
         invoiceNumber: invoiceNumber.trim(),
         bankDetails: bankDetails.trim(),
-        totalAmount: invoiceTotalAmount.trim(),
-        vatAmount: invoiceVatAmount.trim(),
+        hourlyRate,
+        vatRate,
+        subtotal,
+        vatAmount,
+        totalAmount,
+        totalHours,
       });
       const path = await save({
         defaultPath: filename,
@@ -187,7 +203,17 @@ export default function ExportModal({ onClose }: Props) {
     to: string,
     projectLabel: string,
     clientLabel: string,
-    invoiceMeta: { includeInvoiceMeta: boolean; invoiceTitle: string; invoiceNumber: string; bankDetails: string; totalAmount: string; vatAmount: string }
+    invoiceMeta: {
+      includeInvoiceMeta: boolean;
+      invoiceNumber: string;
+      bankDetails: string;
+      hourlyRate: number;
+      vatRate: number;
+      subtotal: number;
+      vatAmount: number;
+      totalAmount: number;
+      totalHours: number;
+    }
   ): Uint8Array {
     const groups = new Map<string, Session[]>();
     for (const s of sessions) {
@@ -197,89 +223,230 @@ export default function ExportModal({ onClose }: Props) {
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key)!.push(s);
     }
+
     const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
     const W = doc.internal.pageSize.getWidth();
-    let y = 20;
-    const reportTitle = invoiceMeta.includeInvoiceMeta
-      ? (invoiceMeta.invoiceTitle || "Invoice Draft")
-      : "Flow Tracker — Time Report";
-    doc.setFont("helvetica", "bold"); doc.setFontSize(18);
-    doc.text(reportTitle, W / 2, y, { align: "center" });
-    y += 8;
-    doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.setTextColor(100);
-    doc.text(`Period: ${fmtDate(from + "T00:00:00")} – ${fmtDate(to + "T00:00:00")}`, W / 2, y, { align: "center" });
-    y += 5;
-    if (clientLabel || projectLabel) {
-      const filterStr = [clientLabel && `Client: ${clientLabel}`, projectLabel && `Project: ${projectLabel}`].filter(Boolean).join("  |  ");
-      doc.text(filterStr, W / 2, y, { align: "center" });
-      y += 5;
+    const H = doc.internal.pageSize.getHeight();
+    let y = 16;
+
+    // HEADER: FlowTracker Logo + Status Badge
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(14);
+    doc.setTextColor(33, 150, 243);
+    doc.text("FLOW TRACKER", 14, y);
+    
+    const status = invoiceMeta.invoiceNumber ? "PAID" : "DRAFT";
+    if (status === "PAID") {
+      doc.setTextColor(63, 185, 80);
+    } else {
+      doc.setTextColor(139, 145, 157);
     }
+    doc.setFontSize(10);
+    doc.text(status, W - 14, y, { align: "right" });
+    
+    doc.setTextColor(0);
+    y += 10;
+
     if (invoiceMeta.includeInvoiceMeta) {
-      if (invoiceMeta.invoiceNumber) {
-        doc.text(`Invoice #: ${invoiceMeta.invoiceNumber}`, W / 2, y, { align: "center" });
-        y += 5;
-      }
-      if (invoiceMeta.bankDetails) {
-        doc.setFillColor(245, 247, 250);
-        const details = `Bank details: ${invoiceMeta.bankDetails}`;
-        const lines = doc.splitTextToSize(details, W - 34);
-        const boxH = Math.max(10, (lines.length * 4.4) + 4);
-        doc.roundedRect(14, y - 2, W - 28, boxH, 1.2, 1.2, "F");
-        doc.setTextColor(80);
-        doc.text(lines, 17, y + 2);
-        doc.setTextColor(0);
-        y += boxH + 2;
-      }
-      if (invoiceMeta.totalAmount) {
-        doc.setFont("helvetica", "bold");
-        doc.text(`Total amount: ${invoiceMeta.totalAmount}`, W / 2, y, { align: "center" });
-        doc.setFont("helvetica", "normal");
-        y += 5;
-      }
-      if (invoiceMeta.vatAmount) {
-        doc.text(`VAT: ${invoiceMeta.vatAmount}`, W / 2, y, { align: "center" });
-        y += 5;
-      }
+      doc.setFontSize(7.5);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(139, 145, 157);
+      doc.text("INVOICE DETAILS", 14, y);
+      y += 5;
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(0);
+      const col1 = 14, col2 = 65, col3 = 116;
+      
+      doc.setFontSize(7);
+      doc.setTextColor(100);
+      doc.text("Invoice #", col1, y);
+      doc.text("Date", col2, y);
+      doc.text("Period", col3, y);
+      y += 4;
+      
+      doc.setFontSize(9);
+      doc.setTextColor(0);
+      doc.setFont("helvetica", "bold");
+      doc.text(invoiceMeta.invoiceNumber || "—", col1, y);
+      doc.text(fmtDate(from + "T00:00:00"), col2, y);
+      doc.text(`${fmtDate(from + "T00:00:00")} – ${fmtDate(to + "T00:00:00")}`, col3, y);
+      y += 7;
     }
-    y += 7; doc.setTextColor(0);
+
+    if (clientLabel || projectLabel) {
+      doc.setFontSize(7.5);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(139, 145, 157);
+      doc.text("CLIENT & PROVIDER", 14, y);
+      y += 5;
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(0);
+      
+      if (projectLabel) {
+        doc.setFontSize(7);
+        doc.setTextColor(100);
+        doc.text("Project", 14, y);
+        doc.setFontSize(9);
+        doc.setTextColor(0);
+        doc.setFont("helvetica", "bold");
+        doc.text(projectLabel, 14, y + 4);
+        y += 9;
+      }
+      
+      if (clientLabel) {
+        doc.setFontSize(7);
+        doc.setTextColor(100);
+        doc.setFont("helvetica", "normal");
+        doc.text("Client", 14, y);
+        doc.setFontSize(9);
+        doc.setTextColor(0);
+        doc.setFont("helvetica", "bold");
+        doc.text(clientLabel, 14, y + 4);
+        y += 9;
+      }
+
+      y += 2;
+    }
+
     let grand = 0;
     for (const [name, rows] of groups.entries()) {
       const total = rows.reduce((a, s) => a + (s.duration ?? 0), 0);
       grand += total;
-      doc.setFont("helvetica", "bold"); doc.setFontSize(11);
-      doc.setFillColor(245, 247, 250);
-      doc.rect(14, y - 4, W - 28, 7, "F");
-      doc.text(name, 16, y);
-      doc.text(fmtSecs(total), W - 14, y, { align: "right" });
-      y += 6;
+
+      doc.setFillColor(240, 242, 245);
+      doc.rect(14, y - 2.5, W - 28, 6, "F");
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.setTextColor(0);
+      doc.text(name.toUpperCase(), 16, y + 1);
+      doc.text(`Subtotal: ${fmtSecs(total)}`, W - 14, y + 1, { align: "right" });
+      y += 7;
+
       autoTable(doc, {
         startY: y,
-        head: [["Application", "Date", "Duration"]],
+        head: [["APPLICATION", "DATE", "DURATION"]],
         body: rows.map(s => [s.app_name, fmtDate(s.start_time), fmtSecs(s.duration ?? 0)]),
         theme: "plain",
-        styles: { fontSize: 9, cellPadding: 2 },
-        headStyles: { textColor: [120, 120, 120], fontStyle: "normal" },
-        columnStyles: { 1: { cellWidth: 35 }, 2: { cellWidth: 25, halign: "right" } },
+        styles: {
+          fontSize: 8,
+          cellPadding: 2.5,
+          textColor: [0, 0, 0],
+          lineColor: [230, 230, 230],
+        },
+        headStyles: {
+          textColor: [100, 100, 100],
+          fontStyle: "bold",
+          fillColor: [255, 255, 255],
+          lineColor: [200, 200, 200],
+          fontSize: 7,
+        },
+        columnStyles: {
+          0: { cellWidth: W - 66 },
+          1: { cellWidth: 30, halign: "center" },
+          2: { cellWidth: 25, halign: "right" },
+        },
         margin: { left: 14, right: 14 },
+        didDrawPage: () => {},
       });
       y = (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8;
-      if (y > 260) { doc.addPage(); y = 20; }
+
+      if (y > H - 50) {
+        doc.addPage();
+        y = 16;
+      }
     }
-    doc.setDrawColor(200); doc.line(14, y, W - 14, y); y += 5;
-    doc.setFont("helvetica", "bold"); doc.setFontSize(11);
-    doc.text("Total tracked time", 14, y);
-    doc.text(fmtSecs(grand), W - 14, y, { align: "right" });
+
+    if (invoiceMeta.includeInvoiceMeta) {
+      y += 2;
+      doc.setDrawColor(200);
+      doc.line(14, y, W - 14, y);
+      y += 6;
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(0);
+
+      if (invoiceMeta.hourlyRate > 0) {
+        doc.setFont("helvetica", "normal");
+        doc.text("Hourly Rate:", 14, y);
+        doc.text(fmtMoney(invoiceMeta.hourlyRate), W - 14, y, { align: "right" });
+        y += 6;
+
+        doc.text("Worked Hours:", 14, y);
+        doc.text(invoiceMeta.totalHours.toFixed(2), W - 14, y, { align: "right" });
+        y += 6;
+
+        doc.setFont("helvetica", "bold");
+        doc.text("Subtotal:", 14, y);
+        doc.text(fmtMoney(invoiceMeta.subtotal), W - 14, y, { align: "right" });
+        y += 6;
+      }
+
+      if (invoiceMeta.vatRate > 0 && invoiceMeta.subtotal > 0) {
+        doc.setFont("helvetica", "normal");
+        doc.text(`VAT (${invoiceMeta.vatRate.toFixed(2)}%):`, 14, y);
+        doc.text(fmtMoney(invoiceMeta.vatAmount), W - 14, y, { align: "right" });
+        y += 6;
+      }
+
+      if (invoiceMeta.hourlyRate > 0) {
+        doc.setFont("helvetica", "bold");
+        doc.text("Total Amount:", 14, y);
+        doc.text(fmtMoney(invoiceMeta.totalAmount), W - 14, y, { align: "right" });
+        y += 6;
+      }
+
+      if (invoiceMeta.bankDetails) {
+        y += 2;
+        doc.setFillColor(245, 247, 250);
+        doc.setTextColor(80);
+        doc.setFontSize(8);
+        const bankLines = doc.splitTextToSize(`Bank Details: ${invoiceMeta.bankDetails}`, W - 34);
+        const boxH = Math.max(10, (bankLines.length * 4.2) + 4);
+        doc.roundedRect(14, y - 2, W - 28, boxH, 1.5, 1.5, "F");
+        doc.text(bankLines, 17, y + 2);
+        doc.setTextColor(0);
+        y += boxH + 2;
+      }
+    }
+
+    y += 4;
+    doc.setDrawColor(0);
+    doc.setLineWidth(0.5);
+    doc.line(14, y, W - 14, y);
+    y += 8;
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.setTextColor(100);
+    doc.text("TOTAL TRACKED TIME", 14, y);
+    y += 7;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(24);
+    doc.setTextColor(33, 150, 243);
+    doc.text(fmtSecs(grand), 14, y);
+    y += 12;
 
     // ── Promo footer on every page ──────────────────────────────────────────
     const totalPages = (doc as jsPDF & { internal: { getNumberOfPages: () => number } }).internal.getNumberOfPages();
     for (let i = 1; i <= totalPages; i++) {
       doc.setPage(i);
-      const pH = doc.internal.pageSize.getHeight();
-      doc.setDrawColor(220); doc.line(14, pH - 18, W - 14, pH - 18);
-      doc.setFont("helvetica", "italic"); doc.setFontSize(8); doc.setTextColor(150);
+      const pageH = doc.internal.pageSize.getHeight();
+      
+      doc.setDrawColor(220);
+      doc.line(14, pageH - 18, W - 14, pageH - 18);
+      
+      doc.setFont("helvetica", "italic");
+      doc.setFontSize(7.5);
+      doc.setTextColor(150);
       doc.text(
         "Generated with Flow Tracker  ·  Available on the Mac App Store & Microsoft Store",
-        W / 2, pH - 11,
+        W / 2, pageH - 12,
         { align: "center" }
       );
     }
@@ -464,16 +631,6 @@ export default function ExportModal({ onClose }: Props) {
             {includeInvoiceMeta && (
               <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10 }}>
                 <div>
-                  <label style={{ display: "block", fontSize: 11, color: C.onSurfaceVar, marginBottom: 4 }}>Invoice Title</label>
-                  <input
-                    type="text"
-                    value={invoiceTitle}
-                    onChange={(e) => setInvoiceTitle(e.target.value)}
-                    placeholder="Invoice Draft"
-                    style={{ ...selectStyle, fontFamily: "Roboto Mono, monospace" }}
-                  />
-                </div>
-                <div>
                   <label style={{ display: "block", fontSize: 11, color: C.onSurfaceVar, marginBottom: 4 }}>Invoice Number</label>
                   <input
                     type="text"
@@ -494,24 +651,11 @@ export default function ExportModal({ onClose }: Props) {
                   />
                 </div>
                 <div>
-                  <label style={{ display: "block", fontSize: 11, color: C.onSurfaceVar, marginBottom: 4 }}>Total Amount</label>
-                  <input
-                    type="text"
-                    value={invoiceTotalAmount}
-                    onChange={(e) => setInvoiceTotalAmount(e.target.value)}
-                    placeholder={defaultHourlyRate ? `e.g. ${defaultHourlyRate}` : "e.g. $2,500 or €2,250"}
-                    style={{ ...selectStyle, fontFamily: "Roboto Mono, monospace" }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: 11, color: C.onSurfaceVar, marginBottom: 4 }}>VAT Amount (optional)</label>
-                  <input
-                    type="text"
-                    value={invoiceVatAmount}
-                    onChange={(e) => setInvoiceVatAmount(e.target.value)}
-                    placeholder={defaultVatRate ? `e.g. ${defaultVatRate}` : "e.g. $500 or €450"}
-                    style={{ ...selectStyle, fontFamily: "Roboto Mono, monospace" }}
-                  />
+                  <label style={{ display: "block", fontSize: 11, color: C.onSurfaceVar, marginBottom: 4 }}>Auto Calculation</label>
+                  <div style={{ ...selectStyle, fontFamily: "Roboto Mono, monospace", cursor: "default", lineHeight: 1.7 }}>
+                    Hourly: {defaultHourlyRate || "not set"}<br />
+                    VAT: {defaultVatRate || "0"}
+                  </div>
                 </div>
               </div>
             )}
