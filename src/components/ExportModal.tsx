@@ -68,6 +68,8 @@ export default function ExportModal({ onClose }: Props) {
   const [invoiceTitle, setInvoiceTitle] = useState("Invoice Draft");
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [bankDetails, setBankDetails] = useState("");
+  const [invoiceTotalAmount, setInvoiceTotalAmount] = useState("");
+  const [defaultHourlyRate, setDefaultHourlyRate] = useState("");
 
   useEffect(() => {
     listAllWorkSessions().then(setAllWorkSessions).catch(console.error);
@@ -77,11 +79,14 @@ export default function ExportModal({ onClose }: Props) {
       getSetting("invoice_meta_enabled").catch(() => "false"),
       getSetting("invoice_title_default").catch(() => "Invoice Draft"),
       getSetting("bank_details_default").catch(() => ""),
-    ]).then(([enabled, title, bank]) => {
+      getSetting("hourly_rate_default").catch(() => ""),
+    ]).then(([enabled, title, bank, rate]) => {
       setIncludeInvoiceMeta(enabled === "true" || enabled === "1");
       setInvoiceTitle(title || "Invoice Draft");
       setInvoiceNumber("");
       setBankDetails(bank || "");
+      setDefaultHourlyRate(rate || "");
+      setInvoiceTotalAmount("");
     });
   }, []);
 
@@ -157,6 +162,7 @@ export default function ExportModal({ onClose }: Props) {
         invoiceTitle: invoiceTitle.trim(),
         invoiceNumber: invoiceNumber.trim(),
         bankDetails: bankDetails.trim(),
+        totalAmount: invoiceTotalAmount.trim(),
       });
       const path = await save({
         defaultPath: filename,
@@ -175,7 +181,7 @@ export default function ExportModal({ onClose }: Props) {
     to: string,
     projectLabel: string,
     clientLabel: string,
-    invoiceMeta: { includeInvoiceMeta: boolean; invoiceTitle: string; invoiceNumber: string; bankDetails: string }
+    invoiceMeta: { includeInvoiceMeta: boolean; invoiceTitle: string; invoiceNumber: string; bankDetails: string; totalAmount: string }
   ): Uint8Array {
     const groups = new Map<string, Session[]>();
     for (const s of sessions) {
@@ -217,6 +223,12 @@ export default function ExportModal({ onClose }: Props) {
         doc.text(lines, 17, y + 2);
         doc.setTextColor(0);
         y += boxH + 2;
+      }
+      if (invoiceMeta.totalAmount) {
+        doc.setFont("helvetica", "bold");
+        doc.text(`Total amount: ${invoiceMeta.totalAmount}`, W / 2, y, { align: "center" });
+        doc.setFont("helvetica", "normal");
+        y += 5;
       }
     }
     y += 7; doc.setTextColor(0);
@@ -469,6 +481,16 @@ export default function ExportModal({ onClose }: Props) {
                     placeholder="e.g. Beneficiary, IBAN, SWIFT/BIC, bank name"
                     rows={3}
                     style={{ ...selectStyle, resize: "vertical", fontFamily: "Roboto Mono, monospace" }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, color: C.onSurfaceVar, marginBottom: 4 }}>Total Amount</label>
+                  <input
+                    type="text"
+                    value={invoiceTotalAmount}
+                    onChange={(e) => setInvoiceTotalAmount(e.target.value)}
+                    placeholder={defaultHourlyRate ? `e.g. ${defaultHourlyRate}` : "e.g. $2,500 or €2,250"}
+                    style={{ ...selectStyle, fontFamily: "Roboto Mono, monospace" }}
                   />
                 </div>
               </div>
