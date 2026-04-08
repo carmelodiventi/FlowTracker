@@ -235,15 +235,6 @@ export default function ExportModal({ onClose }: Props) {
     doc.setTextColor(33, 150, 243);
     doc.text("FLOW TRACKER", 14, y);
     
-    const status = invoiceMeta.invoiceNumber ? "PAID" : "DRAFT";
-    if (status === "PAID") {
-      doc.setTextColor(63, 185, 80);
-    } else {
-      doc.setTextColor(139, 145, 157);
-    }
-    doc.setFontSize(10);
-    doc.text(status, W - 14, y, { align: "right" });
-    
     doc.setTextColor(0);
     y += 10;
 
@@ -334,6 +325,7 @@ export default function ExportModal({ onClose }: Props) {
         styles: {
           fontSize: 8,
           cellPadding: 2.5,
+          valign: "middle",
           textColor: [0, 0, 0],
           lineColor: [230, 230, 230],
         },
@@ -342,12 +334,13 @@ export default function ExportModal({ onClose }: Props) {
           fontStyle: "bold",
           fillColor: [255, 255, 255],
           lineColor: [200, 200, 200],
+          valign: "middle",
           fontSize: 7,
         },
         columnStyles: {
           0: { cellWidth: W - 66 },
-          1: { cellWidth: 30, halign: "center" },
-          2: { cellWidth: 25, halign: "right" },
+          1: { cellWidth: 30, halign: "center", valign: "middle" },
+          2: { cellWidth: 25, halign: "right", valign: "middle" },
         },
         margin: { left: 14, right: 14 },
         didDrawPage: () => {},
