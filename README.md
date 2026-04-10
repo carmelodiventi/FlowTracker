@@ -4,6 +4,10 @@ Privacy-first, zero-effort desktop time tracking built with Tauri (Rust + React/
 
 Flow Tracker automatically records time on apps you choose, keeps data local, and helps you review your day without manual start/stop timers.
 
+## Status
+
+Beta. The app is usable, but features and UX may change quickly and occasional bugs are expected.
+
 ## Download
 
 Prebuilt binaries are published on the GitHub Releases page:
@@ -22,6 +26,20 @@ After publishing this repository, replace this placeholder with your real URL:
 - Whitelist-based app monitoring
 - Local-first data storage (privacy by default)
 - Built for makers who switch context often
+
+## Screenshots
+
+Add your product screenshots in `docs/screenshots/` and keep these filenames:
+
+- `docs/screenshots/dashboard.png`
+- `docs/screenshots/whitelist.png`
+- `docs/screenshots/projects.png`
+- `docs/screenshots/settings.png`
+
+![Dashboard](docs/screenshots/dashboard.png)
+![Whitelist](docs/screenshots/whitelist.png)
+![Projects](docs/screenshots/projects.png)
+![Settings](docs/screenshots/settings.png)
 
 ## Current Status
 
