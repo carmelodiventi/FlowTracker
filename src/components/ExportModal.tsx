@@ -338,9 +338,9 @@ export default function ExportModal({ onClose }: Props) {
           fontSize: 7,
         },
         columnStyles: {
-          0: { cellWidth: W - 66 },
-          1: { cellWidth: 30, halign: "center", valign: "middle" },
-          2: { cellWidth: 25, halign: "right", valign: "middle" },
+          0: { cellWidth: W - 90 },
+          1: { cellWidth: 28, halign: "left", valign: "middle" },
+          2: { cellWidth: 20, halign: "left", valign: "middle" },
         },
         margin: { left: 14, right: 14 },
         didDrawPage: () => {},
