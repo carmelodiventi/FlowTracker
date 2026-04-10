@@ -1,112 +1,100 @@
-# Flow Tracker
+# ⚡️ Flow Tracker
 
-Privacy-first, zero-effort desktop time tracking built with Tauri (Rust + React/TypeScript).
+<p align="center">
+  <strong>Privacy-first, zero-effort desktop time tracking.</strong><br />
+  Built with memory-safe <b>Rust</b> (Tauri) and modern <b>React/TypeScript</b>.
+</p>
 
-Flow Tracker automatically records time on apps you choose, keeps data local, and helps you review your day without manual start/stop timers.
+<p align="center">
+  <a href="https://github.com/carmelodiventi/FlowTracker/releases">
+    <img src="https://img.shields.io/github/v/release/carmelodiventi/FlowTracker?style=flat-square&color=58a6ff" alt="Latest Release">
+  </a>
+  <a href="https://github.com/carmelodiventi/FlowTracker/releases">
+    <img src="https://img.shields.io/github/downloads/carmelodiventi/FlowTracker/total?style=flat-square&color=67df70" alt="Total Downloads">
+  </a>
+  <img src="https://img.shields.io/badge/license-MIT-transparent?style=flat-square" alt="License">
+</p>
 
-## Status
+---
 
-Beta. The app is usable, but features and UX may change quickly and occasional bugs are expected.
+**Flow Tracker** automatically records time on the apps you choose, keeps data 100% local, and helps you review your day without the friction of manual start/stop timers.
 
-## Download
+## 🚀 Status: Beta
+The app is usable, but features and UX may change quickly. Occasional bugs are expected and bug reports are highly appreciated.
 
-Prebuilt binaries are published on the GitHub Releases page:
+## 📦 Download
+Prebuilt binaries are published on the [GitHub Releases](https://github.com/carmelodiventi/FlowTracker/releases) page:
 
-- Open the latest release
-- Download the installer for your OS
-- Install and run
+1. Open the **Latest Release**.
+2. Download the installer for your OS (`.dmg` for macOS, `.msi` or `.exe` for Windows).
+3. Install and run.
 
-After publishing this repository, replace this placeholder with your real URL:
+---
 
-- https://github.com/carmelodiventi/FlowTracker/releases
+## ✨ Why Flow Tracker?
 
-## Why Flow Tracker
+- **Zero-effort**: Passive tracking based on active window focus.
+- **Whitelist-based**: Monitor only the apps you care about (e.g., VS Code, Figma).
+- **Local-first**: No cloud database. Your data never leaves your machine.
+- **Lightweight**: Built on Tauri for a minimal memory footprint (< 50MB RAM).
 
-- Zero-effort tracking based on active window focus
-- Whitelist-based app monitoring
-- Local-first data storage (privacy by default)
-- Built for makers who switch context often
-
-## Screenshots
-
-Add your product screenshots in `docs/screenshots/` and keep these filenames:
-
-- `docs/screenshots/dashboard.png`
-- `docs/screenshots/whitelist.png`
-- `docs/screenshots/projects.png`
-- `docs/screenshots/settings.png`
+## 📸 Screenshots
 
 ![Dashboard](docs/screenshots/dashboard.png)
-![Whitelist](docs/screenshots/whitelist.png)
-![Projects](docs/screenshots/projects.png)
-![Settings](docs/screenshots/settings.png)
+<p align="center"><i>Main dashboard with automatic timeline visualization</i></p>
 
-## Current Status
+---
 
-Flow Tracker is in active development.
+## 🛠 Development & Structure
 
-- Core window tracking is implemented
-- Whitelist/session workflow is in progress
-- Aggregation and richer analytics are planned
+The repository is structured into two main parts:
+1. **Landing Page**: Promotional website (Next.js 15).
+2. **Desktop App**: Core application logic and desktop packaging (Tauri v2).
 
-## macOS Permission Required
+### Prerequisites
+- **Node.js 20+** & **pnpm 9+**
+- **Rust** (stable toolchain)
+- [Tauri prerequisites](https://tauri.app/v1/guides/getting-started/prerequisites) for your specific OS.
 
-On macOS, window title tracking requires Accessibility permission:
-
-System Settings -> Privacy & Security -> Accessibility -> Flow Tracker
-
-Without this permission, app names may still be visible but window titles can be empty.
-
-## Privacy
-
-Flow Tracker is local-first.
-
-- No cloud sync by default
-- No third-party telemetry by default
-- No external server required for core tracking
-
-## Development Setup
-
-Prerequisites:
-
-- Node.js 20+
-- pnpm 9+
-- Rust stable toolchain
-- Tauri prerequisites for your OS
-
-Install dependencies and run in development mode:
-
+### Local Setup (Landing Page)
 ```bash
 pnpm install
+pnpm dev
+```
+
+### Local Setup (Desktop App)
+```bash
+# Navigate to the app directory (if separate) and run Tauri dev
 pnpm tauri dev
 ```
 
-Build desktop bundles locally:
+---
 
-```bash
-pnpm tauri build
-```
+## 🍎 macOS Permissions (Important)
+On macOS, window title tracking requires **Accessibility** permissions:
 
-## Repository Structure
+`System Settings -> Privacy & Security -> Accessibility -> Flow Tracker`
 
-- `src/` - React + TypeScript frontend
-- `src-tauri/` - Rust backend and desktop packaging config
-- `.github/workflows/` - CI/release automation
+*Without this permission, the app can see process names but window titles (like document names or browser tabs) will remain hidden.*
 
-## Contributing
+## 🔒 Privacy by Design
+- **No Cloud Sync**: All logs are stored in a local SQLite database.
+- **No Telemetry**: No third-party tracking or data collection by default.
+- **Open Source**: Audit the code yourself to see exactly how your data is handled.
 
-Issues and pull requests are welcome.
+---
 
-When reporting bugs, include:
+## 🗺 Roadmap
+- [ ] Smart Idle Detection.
+- [ ] Timeline editing and manual adjustments.
+- [ ] Weekly summary reports (optional/premium).
+- [ ] Direct export to Notion, Linear, and Jira.
 
-- OS version
-- Flow Tracker version
-- Steps to reproduce
-- Expected vs actual behavior
+## 🤝 Contributing
+Issues and Pull Requests are welcome! When reporting bugs, please include your OS version and steps to reproduce the issue.
 
-## Roadmap
+---
 
-- Session merge and idle logic improvements
-- Timeline editing UX
-- Better day/week summaries
-- Optional premium features in the future
+<p align="center">
+  Built with ❤️ by makers, for makers.
+</p>
