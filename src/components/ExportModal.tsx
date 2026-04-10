@@ -334,6 +334,7 @@ export default function ExportModal({ onClose }: Props) {
           fontStyle: "bold",
           fillColor: [255, 255, 255],
           lineColor: [200, 200, 200],
+          halign: "left",
           valign: "middle",
           fontSize: 7,
         },
