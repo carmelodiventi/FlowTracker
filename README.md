@@ -14,7 +14,7 @@ Prebuilt binaries are published on the GitHub Releases page:
 
 After publishing this repository, replace this placeholder with your real URL:
 
-- https://github.com/OWNER/FlowTracker/releases
+- https://github.com/carmelodiventi/FlowTracker/releases
 
 ## Why Flow Tracker
 
