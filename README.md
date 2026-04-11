@@ -17,7 +17,7 @@
 
 ---
 
-**Flow Tracker** automatically records time on the apps you choose, keeps data 100% local, and helps you review your day without the friction of manual start/stop timers.
+**Flow Tracker** automatically records time on the apps you choose, synchronizes data securely via MongoDB, and helps you review your day without the friction of manual start/stop timers.
 
 ## 🚀 Status: Beta
 The app is usable, but features and UX may change quickly. Occasional bugs are expected and bug reports are highly appreciated.
@@ -35,25 +35,25 @@ Prebuilt binaries are published on the [GitHub Releases](https://github.com/carm
 
 - **Zero-effort**: Passive tracking based on active window focus.
 - **Whitelist-based**: Monitor only the apps you care about (e.g., VS Code, Figma).
-- **Local-first**: No cloud database. Your data never leaves your machine.
+- **Cloud-Synced**: Automatic data synchronization via MongoDB (Atlas). Access your flow data from any device.
+- **Backend Persistence**: Robust MongoDB integration for scalable telemetry and cross-platform sync.
 - **Lightweight**: Built on Tauri for a minimal memory footprint (< 50MB RAM).
 
 ## 📸 Screenshots
 
 ![Dashboard](docs/screenshots/dashboard.png)
-<p align="center"><i>Main dashboard with automatic timeline visualization</i></p>
+<p align="center"><i>Main dashboard with synchronized automatic timeline</i></p>
 
 ---
 
 ## 🛠 Development & Structure
 
-The repository is structured into two main parts:
-1. **Landing Page**: Promotional website (Next.js 15).
-2. **Desktop App**: Core application logic and desktop packaging (Tauri v2).
+**Desktop App**: Core application logic and desktop packaging (Tauri v2).
 
 ### Prerequisites
 - **Node.js 20+** & **pnpm 9+**
 - **Rust** (stable toolchain)
+- **MongoDB Atlas** account (for cloud sync features)
 - [Tauri prerequisites](https://tauri.app/v1/guides/getting-started/prerequisites) for your specific OS.
 
 ### Local Setup (Landing Page)
@@ -77,9 +77,9 @@ On macOS, window title tracking requires **Accessibility** permissions:
 
 *Without this permission, the app can see process names but window titles (like document names or browser tabs) will remain hidden.*
 
-## 🔒 Privacy by Design
-- **No Cloud Sync**: All logs are stored in a local SQLite database.
-- **No Telemetry**: No third-party tracking or data collection by default.
+## 🔒 Privacy & Cloud Sync
+- **Secure Sync**: All logs are encrypted and synchronized via MongoDB.
+- **User Control**: No third-party tracking or data collection outside your own sync database.
 - **Open Source**: Audit the code yourself to see exactly how your data is handled.
 
 ---
