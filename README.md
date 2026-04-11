@@ -91,7 +91,42 @@ On macOS, window title tracking requires **Accessibility** permissions:
 - [ ] Direct export to Notion, Linear, and Jira.
 
 ## 🤝 Contributing
-Issues and Pull Requests are welcome! When reporting bugs, please include your OS version and steps to reproduce the issue.
+Issues and Pull Requests are welcome. When reporting bugs, please include your OS version and steps to reproduce the issue.
+
+### Pull Request Flow
+1. Fork the repository.
+2. Create a feature branch from `main`.
+3. Make your changes and test locally.
+4. Push your branch to your fork.
+5. Open a Pull Request against `main` with a clear description of the change.
+
+Suggested branch naming:
+
+- `feat/short-description`
+- `fix/short-description`
+- `docs/short-description`
+
+### Release Process
+Releases are automated by GitHub Actions in `.github/workflows/release.yml`.
+
+To publish a new app release:
+
+1. Update the app version where needed.
+2. Commit and push the version changes to `main`.
+3. Create an annotated tag matching the version, for example `v0.1.4`.
+4. Push the tag to GitHub.
+5. GitHub Actions builds the app and creates the GitHub Release for that tag automatically.
+
+Example:
+
+```bash
+git checkout main
+git pull origin main
+git tag -a v0.1.4 -m "Flow Tracker v0.1.4"
+git push origin v0.1.4
+```
+
+You do not need to manually create the GitHub Release first. Pushing the tag is the trigger.
 
 ---
 
