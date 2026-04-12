@@ -1,9 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod db;
 mod watcher;
 
 use commands::*;
+use db::{init_local_db, LocalDbState};
 use mongodb::{options::ClientOptions, Client, Database};
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
@@ -45,11 +47,8 @@ fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 pub fn run() {
     dotenvy::dotenv().ok();
 
-    // Use compile-time embedded URI (release builds) or runtime env var (dev).
-    let mongo_uri = option_env!("MONGODB_URI")
-        .map(|s| s.to_string())
-        .or_else(|| std::env::var("MONGODB_URI").ok())
-        .expect("MONGODB_URI must be set (compile-time via build.rs or runtime .env)");
+    let mongo_uri = std::env::var("MONGODB_URI")
+        .expect("MONGODB_URI must be set via the environment or a local .env file");
 
     let user_id = load_or_create_user_id();
     println!("[Flow Tracker] User ID: {}", user_id);
@@ -60,6 +59,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .setup(move |app| {
             let handle = app.handle().clone();
+            let local_db_path = init_local_db()?;
 
             // ── Connect to MongoDB ────────────────────────────────────────────
             let db = tauri::async_runtime::block_on(async {
@@ -99,7 +99,9 @@ pub fn run() {
                 }
             });
 
+            app.manage(LocalDbState { db_path: local_db_path.clone() });
             app.manage(MongoState { db: db.clone(), user_id: user_id.clone() });
+            println!("[Flow Tracker] Local SQLite DB: {}", local_db_path.display());
 
             // Global tracking pause is runtime-scoped: always reset on app launch.
             tauri::async_runtime::block_on(async {
