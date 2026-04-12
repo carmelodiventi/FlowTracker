@@ -1,8 +1,10 @@
-//! Active-window watcher — MongoDB-only.
+//! Active-window watcher.
 //!
 //! Polls the OS for the foreground window every POLL_INTERVAL seconds.
-//! All session data is written directly to MongoDB Atlas.
+//! Session data is stored locally in SQLite and mirrored to MongoDB best-effort
+//! during the migration window.
 
+use crate::db;
 use active_win_pos_rs::get_active_window;
 use mongodb::{
     bson::{doc, oid::ObjectId, Bson},
@@ -11,7 +13,7 @@ use mongodb::{
 use serde::Serialize;
 use std::{
     collections::HashMap,
-    path::Path,
+    path::{Path, PathBuf},
     process::Command,
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -34,46 +36,20 @@ pub struct SessionClosedPayload {
     pub git_commit:    Option<String>,
 }
 
-pub fn start_watcher(db: Database, user_id: String, app: AppHandle) {
+pub fn start_watcher(db: Database, db_path: PathBuf, user_id: String, app: AppHandle) {
     thread::Builder::new()
         .name("flow-watcher".into())
-        .spawn(move || run(db, user_id, app))
+    .spawn(move || run(db, db_path, user_id, app))
         .expect("Failed to spawn flow-watcher thread");
 }
 
-fn run(db: Database, user_id: String, app: AppHandle) {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("watcher runtime");
-
+fn run(db: Database, db_path: PathBuf, user_id: String, app: AppHandle) {
     println!("[Flow Tracker] Watcher started");
 
-    // Close any sessions left active from a previous crash.
-    rt.block_on(async {
-        let col = db.collection::<mongodb::bson::Document>("sessions");
-        let now = iso_now();
-        let mut cursor = match col.find(doc! { "status": "active", "user_id": &user_id }).await {
-            Ok(c) => c,
-            Err(e) => { eprintln!("[Flow Tracker] stale-session query failed: {e}"); return; }
-        };
-        let mut stale: Vec<(ObjectId, String)> = vec![];
-        while cursor.advance().await.unwrap_or(false) {
-            if let Ok(d) = cursor.deserialize_current() {
-                if let Ok(oid) = d.get_object_id("_id") {
-                    let start = d.get_str("start_time").unwrap_or("").to_string();
-                    stale.push((oid, start));
-                }
-            }
-        }
-        for (oid, start) in stale {
-            let dur = compute_duration(&start, &now);
-            let _ = col.update_one(
-                doc! { "_id": oid },
-                doc! { "$set": { "end_time": &now, "duration": dur, "status": "pending" } },
-            ).await;
-        }
-    });
+    let now = iso_now();
+    if let Err(error) = db::close_stale_active_sessions(&db_path, &user_id, &now, compute_duration) {
+        eprintln!("[Flow Tracker] stale-session cleanup failed: {error}");
+    }
 
     let mut current_session_id: Option<String> = None;
     let mut current_process: Option<String> = None;
@@ -87,16 +63,16 @@ fn run(db: Database, user_id: String, app: AppHandle) {
     loop {
         let idle_secs = seconds_since_last_input();
         let is_idle = idle_secs >= IDLE_THRESHOLD_SECS;
-        let grace_secs = rt.block_on(read_setting_i64(&db, &user_id, "focus_grace_period"))
+        let grace_secs = read_setting_i64(&db_path, &user_id, "focus_grace_period")
             .unwrap_or(120).max(0) as u64;
 
         // Check if tracking is paused globally
-        let is_paused = rt.block_on(read_setting_bool(&db, &user_id, "pause_tracking"));
+        let is_paused = read_setting_bool(&db_path, &user_id, "pause_tracking");
         if is_paused {
             // If tracking is paused and we have an active session, close it
             if let Some(ref sid) = current_session_id {
                 if !session_paused {
-                    rt.block_on(close_active_session(&db, sid));
+                            close_active_session(&db_path, &db, &user_id, sid);
                     session_paused = true;
                 }
             }
@@ -116,7 +92,7 @@ fn run(db: Database, user_id: String, app: AppHandle) {
         match get_active_window() {
             Ok(win) => {
                 let process = win.app_name.clone();
-                let is_whitelisted = rt.block_on(is_app_whitelisted(&db, &user_id, &process));
+                let is_whitelisted = is_app_whitelisted(&db_path, &user_id, &process);
 
                 // Track window title for active session.
                 let title = win.title.trim().to_string();
@@ -128,14 +104,14 @@ fn run(db: Database, user_id: String, app: AppHandle) {
                     pending_switch = None;
                     if let Some(ref sid) = current_session_id {
                         if !session_paused {
-                            rt.block_on(pause_session(&db, sid));
+                            pause_session(&db_path, &db, &user_id, sid);
                             session_paused = true;
                         }
                     }
                 } else {
                     if session_paused {
                         if let Some(ref sid) = current_session_id {
-                            rt.block_on(resume_session(&db, sid));
+                            resume_session(&db_path, &db, &user_id, sid);
                         }
                     }
                     session_paused = false;
@@ -151,7 +127,7 @@ fn run(db: Database, user_id: String, app: AppHandle) {
                         // No session running at all — open one immediately.
                         pending_switch = None;
                         if is_whitelisted {
-                            if let Ok(sid) = rt.block_on(open_session(&db, &user_id, &process)) {
+                            if let Ok(sid) = open_session(&db_path, &db, &user_id, &process) {
                                 let _ = app.emit("flow:session-opened", sid.clone());
                                 current_session_id = Some(sid);
                                 // Capture git context and reset title tracking for new session.
@@ -178,7 +154,7 @@ fn run(db: Database, user_id: String, app: AppHandle) {
                             None => {
                                 if effective_grace == 0 {
                                     pending_switch = None;
-                                    commit_switch(&rt, &db, &user_id, &app, &mut current_session_id,
+                                    commit_switch(&db_path, &db, &user_id, &app, &mut current_session_id,
                                                   &mut current_process, &process, is_whitelisted,
                                                   &mut title_counts, &mut session_git_branch,
                                                   &mut session_git_commit, &win.process_path);
@@ -190,7 +166,7 @@ fn run(db: Database, user_id: String, app: AppHandle) {
                                 if pending_proc == &process {
                                     if switched_at.elapsed().as_secs() >= effective_grace {
                                         pending_switch = None;
-                                        commit_switch(&rt, &db, &user_id, &app, &mut current_session_id,
+                                        commit_switch(&db_path, &db, &user_id, &app, &mut current_session_id,
                                                       &mut current_process, &process, is_whitelisted,
                                                       &mut title_counts, &mut session_git_branch,
                                                       &mut session_git_commit, &win.process_path);
@@ -216,14 +192,14 @@ fn run(db: Database, user_id: String, app: AppHandle) {
                     Some(e) if e >= grace_secs => {
                         pending_switch = None;
                         if let Some(sid) = current_session_id.take() {
-                            let threshold = rt.block_on(read_setting_i64(&db, &user_id, "auto_merge_threshold"))
+                            let threshold = read_setting_i64(&db_path, &user_id, "auto_merge_threshold")
                                 .unwrap_or(120);
                             let window_titles = top_titles(&title_counts, 8);
                             let git_branch = session_git_branch.take();
                             let git_commit = session_git_commit.take();
                             title_counts.clear();
                             if let Some((surviving_id, app_name, dur)) =
-                                rt.block_on(close_and_merge(&db, &sid, threshold))
+                                close_and_merge(&db_path, &db, &user_id, &sid, threshold)
                             {
                                 let _ = app.emit(
                                     "flow:session-closed",
@@ -251,7 +227,7 @@ fn run(db: Database, user_id: String, app: AppHandle) {
 }
 
 fn commit_switch(
-    rt: &tokio::runtime::Runtime,
+    db_path: &Path,
     db: &Database,
     user_id: &str,
     app: &AppHandle,
@@ -265,12 +241,12 @@ fn commit_switch(
     new_process_path: &Path,
 ) {
     if let Some(sid) = current_session_id.take() {
-        let threshold = rt.block_on(read_setting_i64(db, user_id, "auto_merge_threshold")).unwrap_or(120);
+        let threshold = read_setting_i64(db_path, user_id, "auto_merge_threshold").unwrap_or(120);
         let window_titles = top_titles(title_counts, 8);
         let git_branch = session_git_branch.clone();
         let git_commit = session_git_commit.clone();
         if let Some((surviving_id, app_name, dur)) =
-            rt.block_on(close_and_merge(db, &sid, threshold))
+            close_and_merge(db_path, db, user_id, &sid, threshold)
         {
             let _ = app.emit(
                 "flow:session-closed",
@@ -292,7 +268,7 @@ fn commit_switch(
     *session_git_commit = commit;
 
     if is_whitelisted {
-        if let Ok(sid) = rt.block_on(open_session(db, user_id, new_process)) {
+        if let Ok(sid) = open_session(db_path, db, user_id, new_process) {
             let _ = app.emit("flow:session-opened", sid.clone());
             *current_session_id = Some(sid);
         }
@@ -354,182 +330,138 @@ fn top_titles(counts: &HashMap<String, u32>, n: usize) -> Vec<String> {
     pairs.iter().take(n).map(|(t, _)| (*t).clone()).collect()
 }
 
-// ── MongoDB helpers ────────────────────────────────────────────────────────────
+// ── Storage helpers ───────────────────────────────────────────────────────────
 
-async fn is_app_whitelisted(db: &Database, user_id: &str, process_name: &str) -> bool {
-    let col = db.collection::<mongodb::bson::Document>("applications");
-    col.find_one(doc! { "process_name": process_name, "user_id": user_id, "is_enabled": true })
-        .await
-        .unwrap_or(None)
-        .is_some()
+fn is_app_whitelisted(db_path: &Path, user_id: &str, process_name: &str) -> bool {
+    db::is_app_whitelisted(db_path, user_id, process_name).unwrap_or(false)
 }
 
-async fn open_session(db: &Database, user_id: &str, process_name: &str) -> Result<String, String> {
-    let apps = db.collection::<mongodb::bson::Document>("applications");
-    apps.update_one(
-        doc! { "process_name": process_name, "user_id": user_id },
-        doc! { "$setOnInsert": {
-            "name": process_name,
-            "process_name": process_name,
-            "user_id": user_id,
-            "is_enabled": false
-        }},
-    )
-    .upsert(true)
-    .await
-    .map_err(|e| e.to_string())?;
+fn open_session(db_path: &Path, db: &Database, user_id: &str, process_name: &str) -> Result<String, String> {
+    let now = iso_now();
+    let public_id = db::open_session(db_path, user_id, process_name, &now)?;
 
-    let sessions = db.collection::<mongodb::bson::Document>("sessions");
-    let result = sessions
-        .insert_one(doc! {
-            "user_id":        user_id,
-            "app_name":       process_name,
-            "start_time":     iso_now(),
-            "end_time":       Bson::Null,
-            "duration":       Bson::Null,
-            "task_name":      Bson::Null,
-            "status":         "active",
-            "work_session_id": Bson::Null,
-        })
-        .await
-        .map_err(|e| e.to_string())?;
+    if let Ok(oid) = ObjectId::parse_str(&public_id) {
+        let apps = db.collection::<mongodb::bson::Document>("applications");
+        let _ = std::thread::spawn({
+            let db = db.clone();
+            let user_id = user_id.to_string();
+            let process_name = process_name.to_string();
+            let now = now.clone();
+            move || {
+                tauri::async_runtime::block_on(async move {
+                    let _ = apps.update_one(
+                        doc! { "process_name": &process_name, "user_id": &user_id },
+                        doc! { "$setOnInsert": {
+                            "name": &process_name,
+                            "process_name": &process_name,
+                            "user_id": &user_id,
+                            "is_enabled": false
+                        }},
+                    ).upsert(true).await;
 
-    result
-        .inserted_id
-        .as_object_id()
-        .map(|o| o.to_hex())
-        .ok_or_else(|| "Failed to get inserted ObjectId".to_string())
+                    let sessions = db.collection::<mongodb::bson::Document>("sessions");
+                    let _ = sessions.insert_one(doc! {
+                        "_id": oid,
+                        "user_id": &user_id,
+                        "app_name": &process_name,
+                        "start_time": &now,
+                        "end_time": Bson::Null,
+                        "duration": Bson::Null,
+                        "task_name": Bson::Null,
+                        "status": "active",
+                        "work_session_id": Bson::Null,
+                    }).await;
+                });
+            }
+        }).join();
+    }
+
+    Ok(public_id)
 }
 
-async fn close_and_merge(
+fn close_and_merge(
+    db_path: &Path,
     db: &Database,
+    user_id: &str,
     session_id: &str,
     threshold_secs: i64,
 ) -> Option<(String, String, i64)> {
-    let oid = ObjectId::parse_str(session_id).ok()?;
-    let col = db.collection::<mongodb::bson::Document>("sessions");
     let now = iso_now();
+    let result = db::close_and_merge_session(
+        db_path,
+        user_id,
+        session_id,
+        threshold_secs,
+        &now,
+        parse_iso_to_secs,
+        compute_duration,
+    ).ok()??;
 
-    let session_doc = col.find_one(doc! { "_id": oid }).await.ok()??;
-    let app_name = session_doc.get_str("app_name").ok()?.to_string();
-    let start_time = session_doc.get_str("start_time").ok()?.to_string();
-    let duration = compute_duration(&start_time, &now);
+    if let Ok(oid) = ObjectId::parse_str(session_id) {
+        let col = db.collection::<mongodb::bson::Document>("sessions");
+        let _ = tauri::async_runtime::block_on(async {
+            col.update_one(
+                doc! { "_id": oid },
+                doc! { "$set": { "end_time": &now, "duration": result.2, "status": "pending" } },
+            ).await
+        });
+    }
 
-    // Close this session.
-    let _ = col
-        .update_one(
-            doc! { "_id": oid, "end_time": Bson::Null },
-            doc! { "$set": { "end_time": &now, "duration": duration, "status": "pending" } },
-        )
-        .await;
+    Some(result)
+}
 
-    // Look for a preceding session of the same app to potentially merge with.
-    let mut prior_cursor = match col
-        .find(doc! {
-            "app_name": &app_name,
-            "_id":      { "$ne": oid },
-            "end_time": { "$ne": Bson::Null },
-            "status":   { "$ne": "active" },
-        })
-        .sort(doc! { "end_time": -1_i32 })
-        .limit(1_i64)
-        .await
-    {
-        Ok(c) => c,
-        Err(_) => return Some((session_id.to_string(), app_name, duration)),
-    };
+fn read_setting_i64(db_path: &Path, user_id: &str, key: &str) -> Option<i64> {
+    db::get_setting(db_path, user_id, key).ok().flatten()?.parse().ok()
+}
 
-    if prior_cursor.advance().await.unwrap_or(false) {
-        if let Ok(prior_doc) = prior_cursor.deserialize_current() {
-            if let Ok(prior_oid) = prior_doc.get_object_id("_id") {
-                let prior_end = prior_doc.get_str("end_time").unwrap_or("").to_string();
-                let prior_start = prior_doc.get_str("start_time").unwrap_or("").to_string();
-                let gap = parse_iso_to_secs(&start_time) as i64
-                    - parse_iso_to_secs(&prior_end) as i64;
-                if gap >= 0 && gap <= threshold_secs {
-                    let merged_dur = if prior_start.is_empty() {
-                        duration
-                    } else {
-                        compute_duration(&prior_start, &now)
-                    };
-                    let _ = col
-                        .update_one(
-                            doc! { "_id": prior_oid },
-                            doc! { "$set": { "end_time": &now, "duration": merged_dur, "status": "pending" } },
-                        )
-                        .await;
-                    let _ = col.delete_one(doc! { "_id": oid }).await;
-                    println!(
-                        "[Flow Tracker] Merged {} into {} (gap {}s)",
-                        session_id,
-                        prior_oid.to_hex(),
-                        gap
-                    );
-                    return Some((prior_oid.to_hex(), app_name, merged_dur));
+fn read_setting_bool(db_path: &Path, user_id: &str, key: &str) -> bool {
+    db::get_setting(db_path, user_id, key)
+        .ok()
+        .flatten()
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(false)
+}
+
+fn pause_session(db_path: &Path, db: &Database, user_id: &str, session_id: &str) {
+    let _ = db::update_session_status(db_path, user_id, session_id, "idle");
+    if let Ok(oid) = ObjectId::parse_str(session_id) {
+        let col = db.collection::<mongodb::bson::Document>("sessions");
+        let _ = tauri::async_runtime::block_on(async {
+            col.update_one(doc! { "_id": oid }, doc! { "$set": { "status": "idle" } }).await
+        });
+    }
+}
+
+fn close_active_session(db_path: &Path, db: &Database, user_id: &str, session_id: &str) {
+    let now = iso_now();
+    let _ = db::close_session(db_path, user_id, session_id, &now, "closed", compute_duration);
+    if let Ok(oid) = ObjectId::parse_str(session_id) {
+        let col = db.collection::<mongodb::bson::Document>("sessions");
+        let _ = tauri::async_runtime::block_on(async {
+            if let Ok(Some(doc)) = col.find_one(doc! { "_id": oid }).await {
+                if let Ok(start) = doc.get_str("start_time") {
+                    let duration = compute_duration(start, &now).max(0);
+                    let _ = col.update_one(
+                        doc! { "_id": oid },
+                        doc! { "$set": { "end_time": &now, "duration": duration, "status": "closed" } },
+                    ).await;
                 }
             }
-        }
+            Ok::<(), ()>(())
+        });
     }
-
-    Some((session_id.to_string(), app_name, duration))
 }
 
-async fn read_setting_i64(db: &Database, user_id: &str, key: &str) -> Option<i64> {
-    let scoped_id = format!("{}::{}", user_id, key);
-    let col = db.collection::<mongodb::bson::Document>("settings");
-    let doc = col.find_one(doc! { "_id": &scoped_id }).await.ok()??;
-    doc.get_str("value").ok()?.parse().ok()
-}
-
-async fn read_setting_bool(db: &Database, user_id: &str, key: &str) -> bool {
-    let scoped_id = format!("{}::{}", user_id, key);
-    let col = db.collection::<mongodb::bson::Document>("settings");
-    if let Ok(Some(doc)) = col.find_one(doc! { "_id": &scoped_id }).await {
-        if let Ok(v) = doc.get_str("value") {
-            return v == "true" || v == "1";
-        }
-    }
-    false
-}
-
-async fn pause_session(db: &Database, session_id: &str) {
+fn resume_session(db_path: &Path, db: &Database, user_id: &str, session_id: &str) {
+    let _ = db::update_session_status(db_path, user_id, session_id, "active");
     if let Ok(oid) = ObjectId::parse_str(session_id) {
         let col = db.collection::<mongodb::bson::Document>("sessions");
-        let _ = col
-            .update_one(doc! { "_id": oid }, doc! { "$set": { "status": "idle" } })
-            .await;
-    }
-}
-
-async fn close_active_session(db: &Database, session_id: &str) {
-    if let Ok(oid) = ObjectId::parse_str(session_id) {
-        let col = db.collection::<mongodb::bson::Document>("sessions");
-        let now = iso_now();
-        if let Ok(Some(doc)) = col.find_one(doc! { "_id": oid }).await {
-            if let Ok(start) = doc.get_str("start_time") {
-                let start_dt = chrono::DateTime::parse_from_rfc3339(start)
-                    .map(|d| d.timestamp())
-                    .unwrap_or(0);
-                let now_ts = chrono::Utc::now().timestamp();
-                let duration = (now_ts - start_dt).max(0);
-                let _ = col.update_one(
-                    doc! { "_id": oid },
-                    doc! { "$set": { "end_time": &now, "duration": duration, "status": "closed" } },
-                ).await;
-            }
-        }
-    }
-}
-
-async fn resume_session(db: &Database, session_id: &str) {
-    if let Ok(oid) = ObjectId::parse_str(session_id) {
-        let col = db.collection::<mongodb::bson::Document>("sessions");
-        let _ = col
-            .update_one(
+        let _ = tauri::async_runtime::block_on(async {
+            col.update_one(
                 doc! { "_id": oid, "status": "idle" },
                 doc! { "$set": { "status": "active" } },
-            )
-            .await;
+            ).await
+        });
     }
 }
 
@@ -590,7 +522,7 @@ pub fn parse_iso_to_secs(s: &str) -> u64 {
     days * 86400 + h * 3600 + mi * 60 + sec
 }
 
-fn compute_duration(start: &str, end: &str) -> i64 {
+pub(crate) fn compute_duration(start: &str, end: &str) -> i64 {
     parse_iso_to_secs(end) as i64 - parse_iso_to_secs(start) as i64
 }
 

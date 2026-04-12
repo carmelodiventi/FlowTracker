@@ -1,6 +1,7 @@
 use rusqlite::Connection;
 use rusqlite::{params, OptionalExtension};
 use std::path::{Path, PathBuf};
+use uuid::Uuid;
 
 #[derive(Clone, Debug)]
 pub struct DbApplication {
@@ -9,6 +10,63 @@ pub struct DbApplication {
 	pub process_name: String,
 	pub icon: Option<String>,
 	pub is_enabled: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct DbSession {
+	pub id: String,
+	pub app_name: String,
+	pub start_time: String,
+	pub end_time: Option<String>,
+	pub duration: Option<i64>,
+	pub task_name: Option<String>,
+	pub status: String,
+	pub work_session_id: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct DbAppSummary {
+	pub app_name: String,
+	pub total_secs: i64,
+	pub session_count: i64,
+}
+
+#[derive(Clone, Debug)]
+pub struct DbClient {
+	pub id: String,
+	pub name: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct DbProject {
+	pub id: String,
+	pub name: String,
+	pub color: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct DbProjectDetail {
+	pub id: String,
+	pub name: String,
+	pub color: String,
+	pub description: Option<String>,
+	pub client_id: Option<String>,
+	pub client_name: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct DbWorkSession {
+	pub id: String,
+	pub name: String,
+	pub color: String,
+	pub start_time: String,
+	pub end_time: Option<String>,
+	pub total_secs: i64,
+	pub session_count: i64,
+	pub app_names: String,
+	pub project_id: Option<String>,
+	pub project_name: Option<String>,
+	pub project_color: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -31,6 +89,9 @@ pub fn init_local_db() -> Result<PathBuf, String> {
 
 	initialize_schema(&connection)
 		.map_err(|error| format!("Failed to initialize SQLite schema: {error}"))?;
+
+	apply_migrations(&connection)
+		.map_err(|error| format!("Failed to apply SQLite migrations: {error}"))?;
 
 	Ok(db_path)
 }
@@ -99,6 +160,7 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
 
 		CREATE TABLE IF NOT EXISTS sessions (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			public_id TEXT UNIQUE,
 			user_id TEXT NOT NULL,
 			app_name TEXT NOT NULL,
 			process_name TEXT,
@@ -129,12 +191,66 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
 			ON sessions(user_id, start_time DESC);
 		CREATE INDEX IF NOT EXISTS idx_sessions_user_status
 			ON sessions(user_id, status);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_public_id
+			ON sessions(public_id);
 		CREATE INDEX IF NOT EXISTS idx_projects_user_name
 			ON projects(user_id, name);
 		CREATE INDEX IF NOT EXISTS idx_work_sessions_user_created_at
 			ON work_sessions(user_id, created_at DESC);
 		"#,
 	)
+}
+
+fn apply_migrations(connection: &Connection) -> rusqlite::Result<()> {
+	if !has_column(connection, "sessions", "public_id")? {
+		connection.execute("ALTER TABLE sessions ADD COLUMN public_id TEXT", [])?;
+	}
+
+	connection.execute(
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_public_id ON sessions(public_id)",
+		[],
+	)?;
+
+	let mut statement = connection.prepare("SELECT id FROM sessions WHERE public_id IS NULL OR public_id = ''")?;
+	let rows = statement.query_map([], |row| row.get::<_, i64>(0))?;
+	for row in rows {
+		let id = row?;
+		connection.execute(
+			"UPDATE sessions SET public_id = ?1 WHERE id = ?2",
+			params![generate_public_id(), id],
+		)?;
+	}
+
+	Ok(())
+}
+
+fn has_column(connection: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
+	let pragma = format!("PRAGMA table_info({table})");
+	let mut statement = connection.prepare(&pragma)?;
+	let rows = statement.query_map([], |row| row.get::<_, String>(1))?;
+	for row in rows {
+		if row?.eq_ignore_ascii_case(column) {
+			return Ok(true);
+		}
+	}
+	Ok(false)
+}
+
+pub fn generate_public_id() -> String {
+	Uuid::new_v4().simple().to_string()[..24].to_string()
+}
+
+fn db_session_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DbSession> {
+	Ok(DbSession {
+		id: row.get(0)?,
+		app_name: row.get(1)?,
+		start_time: row.get(2)?,
+		end_time: row.get(3)?,
+		duration: row.get(4)?,
+		task_name: row.get(5)?,
+		status: row.get(6)?,
+		work_session_id: row.get(7)?,
+	})
 }
 
 pub fn list_applications(path: &Path, user_id: &str) -> Result<Vec<DbApplication>, String> {
@@ -283,6 +399,741 @@ pub fn set_setting(path: &Path, user_id: &str, key: &str, value: &str) -> Result
 				updated_at = CURRENT_TIMESTAMP
 			"#,
 			params![user_id, key, value],
+		)
+		.map(|_| ())
+		.map_err(|error| error.to_string())
+}
+
+pub fn upsert_session_record(
+	path: &Path,
+	user_id: &str,
+	public_id: &str,
+	app_name: &str,
+	process_name: Option<&str>,
+	start_time: &str,
+	end_time: Option<&str>,
+	duration: Option<i64>,
+	task_name: Option<&str>,
+	status: &str,
+	work_session_id: Option<&str>,
+) -> Result<(), String> {
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	connection.execute(
+		r#"
+		INSERT INTO sessions (
+			public_id, user_id, app_name, process_name, start_time, end_time,
+			duration, task_name, status, work_session_id
+		)
+		VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+		ON CONFLICT(public_id) DO UPDATE SET
+			app_name = excluded.app_name,
+			process_name = COALESCE(excluded.process_name, sessions.process_name),
+			start_time = excluded.start_time,
+			end_time = excluded.end_time,
+			duration = excluded.duration,
+			task_name = excluded.task_name,
+			status = excluded.status,
+			work_session_id = excluded.work_session_id,
+			updated_at = CURRENT_TIMESTAMP
+		"#,
+		params![
+			public_id,
+			user_id,
+			app_name,
+			process_name,
+			start_time,
+			end_time,
+			duration,
+			task_name,
+			status,
+			work_session_id,
+		],
+	).map(|_| ()).map_err(|error| error.to_string())
+}
+
+pub fn list_sessions_for_date(path: &Path, user_id: &str, date: &str) -> Result<Vec<DbSession>, String> {
+	let start = format!("{}T00:00:00Z", date);
+	let end = format!("{}T23:59:59Z", date);
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	let mut statement = connection.prepare(
+		r#"
+		SELECT public_id, app_name, start_time, end_time, duration, task_name, status, work_session_id
+		FROM sessions
+		WHERE user_id = ?1 AND start_time >= ?2 AND start_time <= ?3
+		ORDER BY start_time DESC
+		"#,
+	).map_err(|error| error.to_string())?;
+	let rows = statement.query_map(params![user_id, start, end], db_session_from_row)
+		.map_err(|error| error.to_string())?;
+	rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
+}
+
+pub fn list_pending_sessions(path: &Path, user_id: &str) -> Result<Vec<DbSession>, String> {
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	let mut statement = connection.prepare(
+		r#"
+		SELECT public_id, app_name, start_time, end_time, duration, task_name, status, work_session_id
+		FROM sessions
+		WHERE user_id = ?1 AND status = 'pending' AND end_time IS NOT NULL
+		ORDER BY start_time DESC
+		LIMIT 20
+		"#,
+	).map_err(|error| error.to_string())?;
+	let rows = statement.query_map([user_id], db_session_from_row).map_err(|error| error.to_string())?;
+	rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
+}
+
+pub fn get_session_by_public_id(path: &Path, user_id: &str, public_id: &str) -> Result<Option<DbSession>, String> {
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	connection.query_row(
+		r#"
+		SELECT public_id, app_name, start_time, end_time, duration, task_name, status, work_session_id
+		FROM sessions
+		WHERE user_id = ?1 AND public_id = ?2
+		"#,
+		params![user_id, public_id],
+		db_session_from_row,
+	).optional().map_err(|error| error.to_string())
+}
+
+pub fn get_active_session(path: &Path, user_id: &str) -> Result<Option<DbSession>, String> {
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	connection.query_row(
+		r#"
+		SELECT public_id, app_name, start_time, end_time, duration, task_name, status, work_session_id
+		FROM sessions
+		WHERE user_id = ?1 AND status = 'active'
+		ORDER BY start_time DESC
+		LIMIT 1
+		"#,
+		[user_id],
+		db_session_from_row,
+	).optional().map_err(|error| error.to_string())
+}
+
+pub fn close_stale_active_sessions(path: &Path, user_id: &str, now: &str, compute_duration: impl Fn(&str, &str) -> i64) -> Result<Vec<(String, i64)>, String> {
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	let mut statement = connection.prepare(
+		"SELECT public_id, start_time FROM sessions WHERE user_id = ?1 AND status = 'active'"
+	).map_err(|error| error.to_string())?;
+	let rows = statement.query_map([user_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+		.map_err(|error| error.to_string())?;
+
+	let mut closed = Vec::new();
+	for row in rows {
+		let (public_id, start_time) = row.map_err(|error| error.to_string())?;
+		let duration = compute_duration(&start_time, now);
+		connection.execute(
+			"UPDATE sessions SET end_time = ?1, duration = ?2, status = 'pending', updated_at = CURRENT_TIMESTAMP WHERE public_id = ?3 AND user_id = ?4",
+			params![now, duration, public_id, user_id],
+		).map_err(|error| error.to_string())?;
+		closed.push((public_id, duration));
+	}
+	Ok(closed)
+}
+
+pub fn is_app_whitelisted(path: &Path, user_id: &str, process_name: &str) -> Result<bool, String> {
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	let found = connection.query_row(
+		"SELECT 1 FROM applications WHERE user_id = ?1 AND process_name = ?2 AND is_enabled = 1 LIMIT 1",
+		params![user_id, process_name],
+		|_| Ok(()),
+	).optional().map_err(|error| error.to_string())?;
+	Ok(found.is_some())
+}
+
+pub fn open_session(path: &Path, user_id: &str, process_name: &str, now: &str) -> Result<String, String> {
+	let public_id = generate_public_id();
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	connection.execute(
+		r#"
+		INSERT INTO applications (user_id, name, process_name, is_enabled)
+		VALUES (?1, ?2, ?3, 0)
+		ON CONFLICT(user_id, process_name) DO UPDATE SET
+			name = excluded.name,
+			updated_at = CURRENT_TIMESTAMP
+		"#,
+		params![user_id, process_name, process_name],
+	).map_err(|error| error.to_string())?;
+	connection.execute(
+		r#"
+		INSERT INTO sessions (public_id, user_id, app_name, process_name, start_time, status)
+		VALUES (?1, ?2, ?3, ?4, ?5, 'active')
+		"#,
+		params![public_id, user_id, process_name, process_name, now],
+	).map_err(|error| error.to_string())?;
+	Ok(public_id)
+}
+
+pub fn update_session_status(path: &Path, user_id: &str, public_id: &str, status: &str) -> Result<(), String> {
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	connection.execute(
+		"UPDATE sessions SET status = ?1, updated_at = CURRENT_TIMESTAMP WHERE public_id = ?2 AND user_id = ?3",
+		params![status, public_id, user_id],
+	).map(|_| ()).map_err(|error| error.to_string())
+}
+
+pub fn close_session(path: &Path, user_id: &str, public_id: &str, now: &str, status: &str, compute_duration: impl Fn(&str, &str) -> i64) -> Result<Option<DbSession>, String> {
+	let session = get_session_by_public_id(path, user_id, public_id)?;
+	let Some(session) = session else { return Ok(None); };
+	let duration = compute_duration(&session.start_time, now).max(0);
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	connection.execute(
+		"UPDATE sessions SET end_time = ?1, duration = ?2, status = ?3, updated_at = CURRENT_TIMESTAMP WHERE public_id = ?4 AND user_id = ?5",
+		params![now, duration, status, public_id, user_id],
+	).map_err(|error| error.to_string())?;
+	get_session_by_public_id(path, user_id, public_id)
+		.map(|session| session.map(|mut session| { session.duration = Some(duration); session.status = status.to_string(); session.end_time = Some(now.to_string()); session }))
+}
+
+pub fn close_and_merge_session(
+	path: &Path,
+	user_id: &str,
+	public_id: &str,
+	threshold_secs: i64,
+	now: &str,
+	parse_iso_to_secs: impl Fn(&str) -> u64,
+	compute_duration: impl Fn(&str, &str) -> i64,
+) -> Result<Option<(String, String, i64)>, String> {
+	let session = get_session_by_public_id(path, user_id, public_id)?;
+	let Some(session) = session else { return Ok(None); };
+	let duration = compute_duration(&session.start_time, now).max(0);
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	connection.execute(
+		"UPDATE sessions SET end_time = ?1, duration = ?2, status = 'pending', updated_at = CURRENT_TIMESTAMP WHERE public_id = ?3 AND user_id = ?4",
+		params![now, duration, public_id, user_id],
+	).map_err(|error| error.to_string())?;
+
+	let mut statement = connection.prepare(
+		r#"
+		SELECT public_id, app_name, start_time, end_time, duration, task_name, status, work_session_id
+		FROM sessions
+		WHERE user_id = ?1 AND app_name = ?2 AND public_id != ?3 AND end_time IS NOT NULL AND status != 'active'
+		ORDER BY end_time DESC
+		LIMIT 1
+		"#,
+	).map_err(|error| error.to_string())?;
+	let prior = statement.query_row(params![user_id, session.app_name, public_id], db_session_from_row)
+		.optional().map_err(|error| error.to_string())?;
+
+	if let Some(prior) = prior {
+		let prior_end = prior.end_time.clone().unwrap_or_default();
+		let gap = parse_iso_to_secs(&session.start_time) as i64 - parse_iso_to_secs(&prior_end) as i64;
+		if gap >= 0 && gap <= threshold_secs {
+			let merged_duration = compute_duration(&prior.start_time, now).max(0);
+			connection.execute(
+				"UPDATE sessions SET end_time = ?1, duration = ?2, status = 'pending', updated_at = CURRENT_TIMESTAMP WHERE public_id = ?3 AND user_id = ?4",
+				params![now, merged_duration, prior.id, user_id],
+			).map_err(|error| error.to_string())?;
+			connection.execute(
+				"DELETE FROM sessions WHERE public_id = ?1 AND user_id = ?2",
+				params![public_id, user_id],
+			).map_err(|error| error.to_string())?;
+			return Ok(Some((prior.id, prior.app_name, merged_duration)));
+		}
+	}
+
+	Ok(Some((session.id, session.app_name, duration)))
+}
+
+pub fn name_session(path: &Path, user_id: &str, public_id: &str, task_name: &str) -> Result<(), String> {
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	let updated = connection.execute(
+		"UPDATE sessions SET task_name = ?1, status = 'confirmed', updated_at = CURRENT_TIMESTAMP WHERE public_id = ?2 AND user_id = ?3",
+		params![task_name, public_id, user_id],
+	).map_err(|error| error.to_string())?;
+	if updated == 0 { Err("Session not found".to_string()) } else { Ok(()) }
+}
+
+pub fn delete_session(path: &Path, user_id: &str, public_id: &str) -> Result<bool, String> {
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	let deleted = connection.execute(
+		"DELETE FROM sessions WHERE public_id = ?1 AND user_id = ?2 AND status != 'active'",
+		params![public_id, user_id],
+	).map_err(|error| error.to_string())?;
+	Ok(deleted > 0)
+}
+
+pub fn daily_summary(path: &Path, user_id: &str, date: &str) -> Result<Vec<DbAppSummary>, String> {
+	let start = format!("{}T00:00:00Z", date);
+	let end = format!("{}T23:59:59Z", date);
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	let mut statement = connection.prepare(
+		r#"
+		SELECT app_name, COALESCE(SUM(duration), 0) AS total_secs, COUNT(*) AS session_count
+		FROM sessions
+		WHERE user_id = ?1 AND start_time >= ?2 AND start_time <= ?3 AND end_time IS NOT NULL
+		GROUP BY app_name
+		ORDER BY total_secs DESC
+		"#,
+	).map_err(|error| error.to_string())?;
+	let rows = statement.query_map(params![user_id, start, end], |row| {
+		Ok(DbAppSummary {
+			app_name: row.get(0)?,
+			total_secs: row.get(1)?,
+			session_count: row.get(2)?,
+		})
+	}).map_err(|error| error.to_string())?;
+	rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
+}
+
+pub fn get_sessions_for_export(path: &Path, user_id: &str, from_date: &str, to_date: &str) -> Result<Vec<DbSession>, String> {
+	let start = format!("{}T00:00:00Z", from_date);
+	let end = format!("{}T23:59:59Z", to_date);
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	let mut statement = connection.prepare(
+		r#"
+		SELECT public_id, app_name, start_time, end_time, duration, task_name, status, work_session_id
+		FROM sessions
+		WHERE user_id = ?1 AND start_time >= ?2 AND start_time <= ?3 AND end_time IS NOT NULL
+		ORDER BY COALESCE(task_name, ''), start_time ASC
+		"#,
+	).map_err(|error| error.to_string())?;
+	let rows = statement.query_map(params![user_id, start, end], db_session_from_row).map_err(|error| error.to_string())?;
+	rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
+}
+
+pub fn list_task_names(path: &Path, user_id: &str) -> Result<Vec<String>, String> {
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	let mut statement = connection.prepare(
+		r#"
+		SELECT task_name
+		FROM sessions
+		WHERE user_id = ?1 AND task_name IS NOT NULL AND task_name != ''
+		GROUP BY task_name
+		ORDER BY MAX(start_time) DESC
+		LIMIT 50
+		"#,
+	).map_err(|error| error.to_string())?;
+	let rows = statement.query_map([user_id], |row| row.get::<_, String>(0)).map_err(|error| error.to_string())?;
+	rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
+}
+
+pub fn rename_task_group(path: &Path, user_id: &str, old_name: &str, new_name: &str) -> Result<(), String> {
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	connection.execute(
+		"UPDATE sessions SET task_name = ?1, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?2 AND task_name = ?3",
+		params![new_name.trim(), user_id, old_name],
+	).map(|_| ()).map_err(|error| error.to_string())
+}
+
+pub fn delete_task_group(path: &Path, user_id: &str, name: &str) -> Result<(), String> {
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	connection.execute(
+		"UPDATE sessions SET task_name = NULL, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?1 AND task_name = ?2",
+		params![user_id, name],
+	).map(|_| ()).map_err(|error| error.to_string())
+}
+
+fn parse_id_i64(id: &str, entity: &str) -> Result<i64, String> {
+	id.parse::<i64>()
+		.map_err(|error| format!("Invalid {entity} id '{id}': {error}"))
+}
+
+fn opt_id_i64(id: Option<&str>, entity: &str) -> Result<Option<i64>, String> {
+	id.map(|value| parse_id_i64(value, entity)).transpose()
+}
+
+fn ids_placeholders(len: usize) -> String {
+	(0..len).map(|_| "?").collect::<Vec<_>>().join(",")
+}
+
+// Clients
+pub fn list_clients(path: &Path, user_id: &str) -> Result<Vec<DbClient>, String> {
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	let mut statement = connection
+		.prepare("SELECT id, name FROM clients WHERE user_id = ?1 ORDER BY name COLLATE NOCASE ASC")
+		.map_err(|error| error.to_string())?;
+	let rows = statement
+		.query_map([user_id], |row| {
+			Ok(DbClient {
+				id: row.get::<_, i64>(0)?.to_string(),
+				name: row.get(1)?,
+			})
+		})
+		.map_err(|error| error.to_string())?;
+	rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
+}
+
+pub fn create_client(path: &Path, user_id: &str, name: &str) -> Result<DbClient, String> {
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	connection
+		.execute(
+			"INSERT INTO clients (user_id, name) VALUES (?1, ?2)",
+			params![user_id, name.trim()],
+		)
+		.map_err(|error| error.to_string())?;
+	let id = connection.last_insert_rowid().to_string();
+	Ok(DbClient {
+		id,
+		name: name.trim().to_string(),
+	})
+}
+
+pub fn delete_client(path: &Path, user_id: &str, id: &str) -> Result<(), String> {
+	let client_id = parse_id_i64(id, "client")?;
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	connection
+		.execute(
+			"DELETE FROM clients WHERE id = ?1 AND user_id = ?2",
+			params![client_id, user_id],
+		)
+		.map(|_| ())
+		.map_err(|error| error.to_string())
+}
+
+// Projects
+pub fn projects_count(path: &Path, user_id: &str) -> Result<i64, String> {
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	connection
+		.query_row(
+			"SELECT COUNT(*) FROM projects WHERE user_id = ?1",
+			[user_id],
+			|row| row.get::<_, i64>(0),
+		)
+		.map_err(|error| error.to_string())
+}
+
+pub fn list_projects(path: &Path, user_id: &str) -> Result<Vec<DbProject>, String> {
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	let mut statement = connection
+		.prepare("SELECT id, name, color FROM projects WHERE user_id = ?1 ORDER BY name COLLATE NOCASE ASC")
+		.map_err(|error| error.to_string())?;
+	let rows = statement
+		.query_map([user_id], |row| {
+			Ok(DbProject {
+				id: row.get::<_, i64>(0)?.to_string(),
+				name: row.get(1)?,
+				color: row.get(2)?,
+			})
+		})
+		.map_err(|error| error.to_string())?;
+	rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
+}
+
+pub fn list_projects_detail(path: &Path, user_id: &str) -> Result<Vec<DbProjectDetail>, String> {
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	let mut statement = connection
+		.prepare(
+			r#"
+			SELECT p.id, p.name, p.color, p.description, p.client_id, c.name
+			FROM projects p
+			LEFT JOIN clients c ON c.id = p.client_id AND c.user_id = p.user_id
+			WHERE p.user_id = ?1
+			ORDER BY p.name COLLATE NOCASE ASC
+			"#,
+		)
+		.map_err(|error| error.to_string())?;
+	let rows = statement
+		.query_map([user_id], |row| {
+			let client_id = row.get::<_, Option<i64>>(4)?;
+			Ok(DbProjectDetail {
+				id: row.get::<_, i64>(0)?.to_string(),
+				name: row.get(1)?,
+				color: row.get(2)?,
+				description: row.get(3)?,
+				client_id: client_id.map(|id| id.to_string()),
+				client_name: row.get(5)?,
+			})
+		})
+		.map_err(|error| error.to_string())?;
+	rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
+}
+
+pub fn create_project(
+	path: &Path,
+	user_id: &str,
+	name: &str,
+	color: &str,
+	description: Option<&str>,
+	client_id: Option<&str>,
+) -> Result<DbProjectDetail, String> {
+	let client_id_i64 = opt_id_i64(client_id, "client")?;
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	connection
+		.execute(
+			"INSERT INTO projects (user_id, name, color, description, client_id) VALUES (?1, ?2, ?3, ?4, ?5)",
+			params![user_id, name.trim(), color, description, client_id_i64],
+		)
+		.map_err(|error| error.to_string())?;
+	let id = connection.last_insert_rowid();
+	let client_name = if let Some(cid) = client_id_i64 {
+		connection
+			.query_row(
+				"SELECT name FROM clients WHERE id = ?1 AND user_id = ?2",
+				params![cid, user_id],
+				|row| row.get::<_, String>(0),
+			)
+			.optional()
+			.map_err(|error| error.to_string())?
+	} else {
+		None
+	};
+	Ok(DbProjectDetail {
+		id: id.to_string(),
+		name: name.trim().to_string(),
+		color: color.to_string(),
+		description: description.map(|v| v.to_string()),
+		client_id: client_id_i64.map(|v| v.to_string()),
+		client_name,
+	})
+}
+
+pub fn update_project(
+	path: &Path,
+	user_id: &str,
+	id: &str,
+	name: &str,
+	description: Option<&str>,
+	client_id: Option<&str>,
+) -> Result<(), String> {
+	let project_id = parse_id_i64(id, "project")?;
+	let client_id_i64 = opt_id_i64(client_id, "client")?;
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	connection
+		.execute(
+			"UPDATE projects SET name = ?1, description = ?2, client_id = ?3, updated_at = CURRENT_TIMESTAMP WHERE id = ?4 AND user_id = ?5",
+			params![name.trim(), description, client_id_i64, project_id, user_id],
+		)
+		.map(|_| ())
+		.map_err(|error| error.to_string())
+}
+
+pub fn delete_project(path: &Path, user_id: &str, id: &str) -> Result<(), String> {
+	let project_id = parse_id_i64(id, "project")?;
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	connection
+		.execute(
+			"UPDATE work_sessions SET project_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE project_id = ?1 AND user_id = ?2",
+			params![project_id, user_id],
+		)
+		.map_err(|error| error.to_string())?;
+	connection
+		.execute(
+			"DELETE FROM projects WHERE id = ?1 AND user_id = ?2",
+			params![project_id, user_id],
+		)
+		.map(|_| ())
+		.map_err(|error| error.to_string())
+}
+
+fn fetch_work_session_by_id(path: &Path, user_id: &str, work_session_id: i64) -> Result<Option<DbWorkSession>, String> {
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	connection.query_row(
+		r#"
+		SELECT ws.id, ws.name, ws.color,
+		       COALESCE(MIN(s.start_time), ws.created_at) as start_time,
+		       MAX(s.end_time) as end_time,
+		       COALESCE(SUM(COALESCE(s.duration, 0)), 0) as total_secs,
+		       COUNT(s.id) as session_count,
+		       COALESCE(GROUP_CONCAT(DISTINCT s.app_name), '') as app_names,
+		       ws.project_id,
+		       p.name,
+		       p.color
+		FROM work_sessions ws
+		LEFT JOIN sessions s ON s.work_session_id = ws.id AND s.user_id = ws.user_id
+		LEFT JOIN projects p ON p.id = ws.project_id AND p.user_id = ws.user_id
+		WHERE ws.id = ?1 AND ws.user_id = ?2
+		GROUP BY ws.id, ws.name, ws.color, ws.created_at, ws.project_id, p.name, p.color
+		"#,
+		params![work_session_id, user_id],
+		|row| {
+			let project_id = row.get::<_, Option<i64>>(8)?;
+			let app_names: String = row.get(7)?;
+			Ok(DbWorkSession {
+				id: row.get::<_, i64>(0)?.to_string(),
+				name: row.get(1)?,
+				color: row.get(2)?,
+				start_time: row.get(3)?,
+				end_time: row.get(4)?,
+				total_secs: row.get(5)?,
+				session_count: row.get(6)?,
+				app_names,
+				project_id: project_id.map(|v| v.to_string()),
+				project_name: row.get(9)?,
+				project_color: row.get(10)?,
+			})
+		},
+	).optional().map_err(|error| error.to_string())
+}
+
+pub fn create_work_session(
+	path: &Path,
+	user_id: &str,
+	name: &str,
+	session_ids: &[String],
+	color: Option<&str>,
+	now_iso: &str,
+) -> Result<DbWorkSession, String> {
+	if session_ids.is_empty() {
+		return Err("No sessions provided".to_string());
+	}
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	let placeholders = ids_placeholders(session_ids.len());
+	let min_start_sql = format!(
+		"SELECT MIN(start_time) FROM sessions WHERE user_id = ? AND public_id IN ({})",
+		placeholders
+	);
+	let mut min_params: Vec<rusqlite::types::Value> = vec![user_id.to_string().into()];
+	for sid in session_ids {
+		min_params.push(sid.clone().into());
+	}
+	let min_start = connection
+		.query_row(&min_start_sql, rusqlite::params_from_iter(min_params), |row| row.get::<_, Option<String>>(0))
+		.optional()
+		.map_err(|error| error.to_string())?
+		.flatten();
+	let created_at = min_start.unwrap_or_else(|| now_iso.to_string());
+	connection
+		.execute(
+			"INSERT INTO work_sessions (user_id, name, color, created_at) VALUES (?1, ?2, ?3, ?4)",
+			params![user_id, name.trim(), color.unwrap_or("#58a6ff"), created_at],
+		)
+		.map_err(|error| error.to_string())?;
+	let ws_id = connection.last_insert_rowid();
+	let update_sql = format!(
+		"UPDATE sessions SET work_session_id = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND public_id IN ({})",
+		placeholders
+	);
+	let mut update_params: Vec<rusqlite::types::Value> = vec![ws_id.into(), user_id.to_string().into()];
+	for sid in session_ids {
+		update_params.push(sid.clone().into());
+	}
+	connection
+		.execute(&update_sql, rusqlite::params_from_iter(update_params))
+		.map_err(|error| error.to_string())?;
+	fetch_work_session_by_id(path, user_id, ws_id)
+		.and_then(|value| value.ok_or_else(|| "Work session not found after insert".to_string()))
+}
+
+pub fn list_work_sessions(path: &Path, user_id: &str, date: &str) -> Result<Vec<DbWorkSession>, String> {
+	let start = format!("{}T00:00:00Z", date);
+	let end = format!("{}T23:59:59Z", date);
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	let mut statement = connection
+		.prepare(
+			"SELECT DISTINCT work_session_id FROM sessions WHERE user_id = ?1 AND start_time >= ?2 AND start_time <= ?3 AND work_session_id IS NOT NULL",
+		)
+		.map_err(|error| error.to_string())?;
+	let ids = statement
+		.query_map(params![user_id, start, end], |row| row.get::<_, i64>(0))
+		.map_err(|error| error.to_string())?;
+	let mut result = Vec::new();
+	for id in ids {
+		if let Some(ws) = fetch_work_session_by_id(path, user_id, id.map_err(|error| error.to_string())?)? {
+			result.push(ws);
+		}
+	}
+	result.sort_by(|a, b| a.start_time.cmp(&b.start_time));
+	Ok(result)
+}
+
+pub fn list_all_work_sessions(path: &Path, user_id: &str) -> Result<Vec<DbWorkSession>, String> {
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	let mut statement = connection
+		.prepare("SELECT id FROM work_sessions WHERE user_id = ?1 ORDER BY created_at ASC")
+		.map_err(|error| error.to_string())?;
+	let ids = statement
+		.query_map([user_id], |row| row.get::<_, i64>(0))
+		.map_err(|error| error.to_string())?;
+	let mut result = Vec::new();
+	for id in ids {
+		if let Some(ws) = fetch_work_session_by_id(path, user_id, id.map_err(|error| error.to_string())?)? {
+			result.push(ws);
+		}
+	}
+	Ok(result)
+}
+
+pub fn update_work_session(path: &Path, user_id: &str, id: &str, name: &str) -> Result<(), String> {
+	let ws_id = parse_id_i64(id, "work session")?;
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	connection
+		.execute(
+			"UPDATE work_sessions SET name = ?1, updated_at = CURRENT_TIMESTAMP WHERE id = ?2 AND user_id = ?3",
+			params![name.trim(), ws_id, user_id],
+		)
+		.map(|_| ())
+		.map_err(|error| error.to_string())
+}
+
+pub fn delete_work_session(path: &Path, user_id: &str, id: &str) -> Result<(), String> {
+	let ws_id = parse_id_i64(id, "work session")?;
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	connection
+		.execute(
+			"UPDATE sessions SET work_session_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE work_session_id = ?1 AND user_id = ?2",
+			params![ws_id, user_id],
+		)
+		.map_err(|error| error.to_string())?;
+	connection
+		.execute(
+			"DELETE FROM work_sessions WHERE id = ?1 AND user_id = ?2",
+			params![ws_id, user_id],
+		)
+		.map(|_| ())
+		.map_err(|error| error.to_string())
+}
+
+pub fn list_sessions_for_work_session(path: &Path, user_id: &str, work_session_id: &str) -> Result<Vec<DbSession>, String> {
+	let ws_id = parse_id_i64(work_session_id, "work session")?;
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	let mut statement = connection.prepare(
+		r#"
+		SELECT public_id, app_name, start_time, end_time, duration, task_name, status, CAST(work_session_id AS TEXT)
+		FROM sessions
+		WHERE user_id = ?1 AND work_session_id = ?2
+		ORDER BY start_time ASC
+		"#,
+	).map_err(|error| error.to_string())?;
+	let rows = statement.query_map(params![user_id, ws_id], db_session_from_row)
+		.map_err(|error| error.to_string())?;
+	rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
+}
+
+pub fn remove_session_from_work_session(path: &Path, user_id: &str, session_id: &str) -> Result<(), String> {
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	connection
+		.execute(
+			"UPDATE sessions SET work_session_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?1 AND public_id = ?2",
+			params![user_id, session_id],
+		)
+		.map(|_| ())
+		.map_err(|error| error.to_string())
+}
+
+pub fn add_session_to_work_session(path: &Path, user_id: &str, session_id: &str, work_session_id: &str) -> Result<(), String> {
+	let ws_id = parse_id_i64(work_session_id, "work session")?;
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	let ws_exists = connection
+		.query_row(
+			"SELECT 1 FROM work_sessions WHERE id = ?1 AND user_id = ?2",
+			params![ws_id, user_id],
+			|row| row.get::<_, i64>(0),
+		)
+		.optional()
+		.map_err(|error| error.to_string())?
+		.is_some();
+	if !ws_exists {
+		return Err("Work session not found".to_string());
+	}
+	connection
+		.execute(
+			"UPDATE sessions SET work_session_id = ?1, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?2 AND public_id = ?3",
+			params![ws_id, user_id, session_id],
+		)
+		.map(|_| ())
+		.map_err(|error| error.to_string())
+}
+
+pub fn assign_work_session_project(path: &Path, user_id: &str, work_session_id: &str, project_id: Option<&str>) -> Result<(), String> {
+	let ws_id = parse_id_i64(work_session_id, "work session")?;
+	let project_id_i64 = opt_id_i64(project_id, "project")?;
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+	connection
+		.execute(
+			"UPDATE work_sessions SET project_id = ?1, updated_at = CURRENT_TIMESTAMP WHERE id = ?2 AND user_id = ?3",
+			params![project_id_i64, ws_id, user_id],
 		)
 		.map(|_| ())
 		.map_err(|error| error.to_string())

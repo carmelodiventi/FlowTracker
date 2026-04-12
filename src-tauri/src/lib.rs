@@ -47,8 +47,10 @@ fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 pub fn run() {
     dotenvy::dotenv().ok();
 
-    let mongo_uri = std::env::var("MONGODB_URI")
-        .expect("MONGODB_URI must be set via the environment or a local .env file");
+    let mongo_uri = std::env::var("MONGODB_URI").ok();
+    if mongo_uri.is_none() {
+        println!("[Flow Tracker] MONGODB_URI not set; running in local-only SQLite mode.");
+    }
 
     let user_id = load_or_create_user_id();
     println!("[Flow Tracker] User ID: {}", user_id);
@@ -63,11 +65,21 @@ pub fn run() {
 
             // ── Connect to MongoDB ────────────────────────────────────────────
             let db = tauri::async_runtime::block_on(async {
-                let mut opts = ClientOptions::parse(&mongo_uri).await
-                    .expect("Invalid MONGODB_URI");
+                let uri = mongo_uri
+                    .clone()
+                    .unwrap_or_else(|| "mongodb://127.0.0.1:27017".to_string());
+                let mut opts = match ClientOptions::parse(&uri).await {
+                    Ok(opts) => opts,
+                    Err(error) => {
+                        eprintln!("[Flow Tracker] Invalid MONGODB_URI ({error}); falling back to local-only mode.");
+                        ClientOptions::parse("mongodb://127.0.0.1:27017").await
+                            .unwrap_or_default()
+                    }
+                };
                 opts.app_name = Some("FlowTracker".into());
-                opts.connect_timeout = Some(std::time::Duration::from_secs(10));
-                opts.server_selection_timeout = Some(std::time::Duration::from_secs(10));
+                // Keep this short so optional MongoDB mirrors fail fast when offline.
+                opts.connect_timeout = Some(std::time::Duration::from_millis(300));
+                opts.server_selection_timeout = Some(std::time::Duration::from_millis(300));
                 let client = Client::with_options(opts)
                     .expect("Failed to create MongoDB client");
                 // Best-effort ping — don't abort if offline at launch
@@ -145,7 +157,7 @@ pub fn run() {
                 .build(&handle)?;
 
             // ── Start watcher ─────────────────────────────────────────────────
-            watcher::start_watcher(db, user_id, handle);
+            watcher::start_watcher(db, local_db_path, user_id, handle);
 
             Ok(())
         })
