@@ -189,6 +189,8 @@ pub fn run() {
             // Settings
             get_setting,
             set_setting,
+            export_backup_json,
+            import_backup_json,
             // Accessibility
             check_accessibility,
             open_accessibility_settings,

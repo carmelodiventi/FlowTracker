@@ -569,6 +569,23 @@ pub async fn set_setting(
     Ok(())
 }
 
+#[tauri::command]
+pub async fn export_backup_json(
+    local_state: State<'_, LocalDbState>,
+    state: State<'_, MongoState>,
+) -> Result<String, String> {
+    db::export_backup_json(&local_state.db_path, &state.user_id)
+}
+
+#[tauri::command]
+pub async fn import_backup_json(
+    local_state: State<'_, LocalDbState>,
+    state: State<'_, MongoState>,
+    backup_json: String,
+) -> Result<db::BackupImportSummary, String> {
+    db::import_backup_json(&local_state.db_path, &state.user_id, &backup_json)
+}
+
 // ── Accessibility ──────────────────────────────────────────────────────────────
 
 #[tauri::command]

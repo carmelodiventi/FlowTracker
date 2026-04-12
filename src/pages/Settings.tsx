@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { save, open } from "@tauri-apps/plugin-dialog";
+import { writeFile, readFile } from "@tauri-apps/plugin-fs";
 import i18n from "../i18n";
-import { getSetting, setSetting } from "../api";
+import { getSetting, setSetting, exportBackupJson, importBackupJson } from "../api";
 import {
   type AIProvider,
   isOllamaAvailable,
@@ -82,6 +84,8 @@ export default function Settings() {
   const [defaultHourlyRate, setDefaultHourlyRate] = useState("");
   const [defaultVatRate, setDefaultVatRate] = useState("");
   const [invoiceSaved, setInvoiceSaved] = useState(false);
+  const [backupStatus, setBackupStatus] = useState<string | null>(null);
+  const [backupBusy, setBackupBusy] = useState(false);
 
   // Language picker state — read the currently active language
   const [currentLang, setCurrentLang] = useState(i18n.language?.slice(0, 2) ?? "en");
@@ -156,6 +160,58 @@ export default function Settings() {
     ]).catch(console.error);
     setInvoiceSaved(true);
     setTimeout(() => setInvoiceSaved(false), 1500);
+  };
+
+  const handleExportBackup = async () => {
+    try {
+      setBackupBusy(true);
+      setBackupStatus(null);
+      const backupJson = await exportBackupJson();
+      const selectedPath = await save({
+        title: "Export Flow Tracker Backup",
+        defaultPath: `flowtracker-backup-${new Date().toISOString().slice(0, 10)}.json`,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (!selectedPath) {
+        setBackupStatus("Backup export cancelled.");
+        return;
+      }
+      await writeFile(selectedPath, new TextEncoder().encode(backupJson));
+      setBackupStatus("Backup exported successfully.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setBackupStatus(`Backup export failed: ${message}`);
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const handleImportBackup = async () => {
+    try {
+      setBackupBusy(true);
+      setBackupStatus(null);
+      const selected = await open({
+        title: "Import Flow Tracker Backup",
+        multiple: false,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (!selected || Array.isArray(selected)) {
+        setBackupStatus("Backup import cancelled.");
+        return;
+      }
+
+      const raw = await readFile(selected);
+      const backupJson = new TextDecoder().decode(raw);
+      const summary = await importBackupJson(backupJson);
+      setBackupStatus(
+        `Backup imported: ${summary.sessions} sessions, ${summary.work_sessions} work sessions, ${summary.projects} projects, ${summary.clients} clients.`
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setBackupStatus(`Backup import failed: ${message}`);
+    } finally {
+      setBackupBusy(false);
+    }
   };
 
   return (
@@ -357,6 +413,52 @@ export default function Settings() {
                 {invoiceSaved ? t("settings.saved") : t("settings.save")}
               </button>
             </div>
+          </div>
+        </div>
+
+        {/* ── AI Integration ─────────────────────────────────────────────── */}
+        <div style={{ marginTop: 40, maxWidth: 560 }}>
+          <div style={{ marginBottom: 16 }}>
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: "#f0f6fc", margin: "0 0 4px" }}>
+              Data Backup
+            </h2>
+            <p style={{ fontSize: 13, color: "#8b919d", margin: 0 }}>
+              Export your full local data to a JSON file, then import it on another computer.
+            </p>
+          </div>
+
+          <div style={{ background: "#181c22", border: "1px solid rgba(65,71,82,0.3)", borderRadius: 6, padding: "20px 24px", display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button
+                onClick={handleExportBackup}
+                disabled={backupBusy}
+                style={{
+                  background: "#58a6ff", color: "#001c38", border: "none",
+                  borderRadius: 4, padding: "9px 16px", fontWeight: 700, fontSize: 12,
+                  cursor: backupBusy ? "not-allowed" : "pointer", letterSpacing: "0.05em",
+                  textTransform: "uppercase", opacity: backupBusy ? 0.7 : 1,
+                }}
+              >
+                Export Backup
+              </button>
+              <button
+                onClick={handleImportBackup}
+                disabled={backupBusy}
+                style={{
+                  background: "#3fb950", color: "#07290f", border: "none",
+                  borderRadius: 4, padding: "9px 16px", fontWeight: 700, fontSize: 12,
+                  cursor: backupBusy ? "not-allowed" : "pointer", letterSpacing: "0.05em",
+                  textTransform: "uppercase", opacity: backupBusy ? 0.7 : 1,
+                }}
+              >
+                Import Backup
+              </button>
+            </div>
+            {backupStatus && (
+              <div style={{ fontSize: 12, color: "#8b919d" }}>
+                {backupStatus}
+              </div>
+            )}
           </div>
         </div>
 

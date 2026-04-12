@@ -1,5 +1,6 @@
 use rusqlite::Connection;
 use rusqlite::{params, OptionalExtension};
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
@@ -67,6 +68,80 @@ pub struct DbWorkSession {
 	pub project_id: Option<String>,
 	pub project_name: Option<String>,
 	pub project_color: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BackupPayload {
+	pub schema_version: u32,
+	pub exported_at: String,
+	pub user_id: String,
+	pub settings: Vec<BackupSetting>,
+	pub applications: Vec<BackupApplication>,
+	pub clients: Vec<BackupClient>,
+	pub projects: Vec<BackupProject>,
+	pub work_sessions: Vec<BackupWorkSession>,
+	pub sessions: Vec<BackupSession>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BackupSetting {
+	pub key: String,
+	pub value: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BackupApplication {
+	pub name: String,
+	pub process_name: String,
+	pub icon: Option<String>,
+	pub is_enabled: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BackupClient {
+	pub id: i64,
+	pub name: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BackupProject {
+	pub id: i64,
+	pub name: String,
+	pub color: String,
+	pub description: Option<String>,
+	pub client_id: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BackupWorkSession {
+	pub id: i64,
+	pub name: String,
+	pub color: String,
+	pub project_id: Option<i64>,
+	pub created_at: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BackupSession {
+	pub public_id: String,
+	pub app_name: String,
+	pub process_name: Option<String>,
+	pub start_time: String,
+	pub end_time: Option<String>,
+	pub duration: Option<i64>,
+	pub task_name: Option<String>,
+	pub status: String,
+	pub work_session_id: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BackupImportSummary {
+	pub settings: usize,
+	pub applications: usize,
+	pub clients: usize,
+	pub projects: usize,
+	pub work_sessions: usize,
+	pub sessions: usize,
 }
 
 #[allow(dead_code)]
@@ -1137,4 +1212,192 @@ pub fn assign_work_session_project(path: &Path, user_id: &str, work_session_id: 
 		)
 		.map(|_| ())
 		.map_err(|error| error.to_string())
+}
+
+pub fn export_backup_json(path: &Path, user_id: &str) -> Result<String, String> {
+	let connection = open_connection(path).map_err(|error| error.to_string())?;
+
+	let mut settings_stmt = connection
+		.prepare("SELECT key, value FROM settings WHERE user_id = ?1 ORDER BY key ASC")
+		.map_err(|error| error.to_string())?;
+	let settings_rows = settings_stmt
+		.query_map([user_id], |row| {
+			Ok(BackupSetting {
+				key: row.get(0)?,
+				value: row.get(1)?,
+			})
+		})
+		.map_err(|error| error.to_string())?;
+	let settings = settings_rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?;
+
+	let mut app_stmt = connection
+		.prepare("SELECT name, process_name, icon, is_enabled FROM applications WHERE user_id = ?1 ORDER BY name ASC")
+		.map_err(|error| error.to_string())?;
+	let app_rows = app_stmt
+		.query_map([user_id], |row| {
+			Ok(BackupApplication {
+				name: row.get(0)?,
+				process_name: row.get(1)?,
+				icon: row.get(2)?,
+				is_enabled: row.get::<_, i64>(3)? != 0,
+			})
+		})
+		.map_err(|error| error.to_string())?;
+	let applications = app_rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?;
+
+	let mut clients_stmt = connection
+		.prepare("SELECT id, name FROM clients WHERE user_id = ?1 ORDER BY id ASC")
+		.map_err(|error| error.to_string())?;
+	let clients_rows = clients_stmt
+		.query_map([user_id], |row| {
+			Ok(BackupClient {
+				id: row.get(0)?,
+				name: row.get(1)?,
+			})
+		})
+		.map_err(|error| error.to_string())?;
+	let clients = clients_rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?;
+
+	let mut projects_stmt = connection
+		.prepare("SELECT id, name, color, description, client_id FROM projects WHERE user_id = ?1 ORDER BY id ASC")
+		.map_err(|error| error.to_string())?;
+	let projects_rows = projects_stmt
+		.query_map([user_id], |row| {
+			Ok(BackupProject {
+				id: row.get(0)?,
+				name: row.get(1)?,
+				color: row.get(2)?,
+				description: row.get(3)?,
+				client_id: row.get(4)?,
+			})
+		})
+		.map_err(|error| error.to_string())?;
+	let projects = projects_rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?;
+
+	let mut ws_stmt = connection
+		.prepare("SELECT id, name, color, project_id, created_at FROM work_sessions WHERE user_id = ?1 ORDER BY id ASC")
+		.map_err(|error| error.to_string())?;
+	let ws_rows = ws_stmt
+		.query_map([user_id], |row| {
+			Ok(BackupWorkSession {
+				id: row.get(0)?,
+				name: row.get(1)?,
+				color: row.get(2)?,
+				project_id: row.get(3)?,
+				created_at: row.get(4)?,
+			})
+		})
+		.map_err(|error| error.to_string())?;
+	let work_sessions = ws_rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?;
+
+	let mut sessions_stmt = connection
+		.prepare(
+			"SELECT public_id, app_name, process_name, start_time, end_time, duration, task_name, status, work_session_id FROM sessions WHERE user_id = ?1 ORDER BY start_time ASC",
+		)
+		.map_err(|error| error.to_string())?;
+	let sessions_rows = sessions_stmt
+		.query_map([user_id], |row| {
+			Ok(BackupSession {
+				public_id: row.get(0)?,
+				app_name: row.get(1)?,
+				process_name: row.get(2)?,
+				start_time: row.get(3)?,
+				end_time: row.get(4)?,
+				duration: row.get(5)?,
+				task_name: row.get(6)?,
+				status: row.get(7)?,
+				work_session_id: row.get(8)?,
+			})
+		})
+		.map_err(|error| error.to_string())?;
+	let sessions = sessions_rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?;
+
+	let payload = BackupPayload {
+		schema_version: 1,
+		exported_at: chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+		user_id: user_id.to_string(),
+		settings,
+		applications,
+		clients,
+		projects,
+		work_sessions,
+		sessions,
+	};
+
+	serde_json::to_string_pretty(&payload).map_err(|error| error.to_string())
+}
+
+pub fn import_backup_json(path: &Path, user_id: &str, backup_json: &str) -> Result<BackupImportSummary, String> {
+	let payload: BackupPayload = serde_json::from_str(backup_json).map_err(|error| format!("Invalid backup JSON: {error}"))?;
+
+	if payload.schema_version != 1 {
+		return Err(format!("Unsupported backup schema_version: {}", payload.schema_version));
+	}
+
+	let mut connection = open_connection(path).map_err(|error| error.to_string())?;
+	let tx = connection.transaction().map_err(|error| error.to_string())?;
+
+	for setting in &payload.settings {
+		tx.execute(
+			"INSERT INTO settings (user_id, key, value) VALUES (?1, ?2, ?3) ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP",
+			params![user_id, setting.key, setting.value],
+		).map_err(|error| error.to_string())?;
+	}
+
+	for app in &payload.applications {
+		tx.execute(
+			"INSERT INTO applications (user_id, name, process_name, icon, is_enabled) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(user_id, process_name) DO UPDATE SET name = excluded.name, icon = excluded.icon, is_enabled = excluded.is_enabled, updated_at = CURRENT_TIMESTAMP",
+			params![user_id, app.name, app.process_name, app.icon, if app.is_enabled { 1 } else { 0 }],
+		).map_err(|error| error.to_string())?;
+	}
+
+	for client in &payload.clients {
+		tx.execute(
+			"INSERT INTO clients (id, user_id, name) VALUES (?1, ?2, ?3) ON CONFLICT(id) DO UPDATE SET name = excluded.name",
+			params![client.id, user_id, client.name],
+		).map_err(|error| error.to_string())?;
+	}
+
+	for project in &payload.projects {
+		tx.execute(
+			"INSERT INTO projects (id, user_id, name, color, description, client_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(id) DO UPDATE SET name = excluded.name, color = excluded.color, description = excluded.description, client_id = excluded.client_id, updated_at = CURRENT_TIMESTAMP",
+			params![project.id, user_id, project.name, project.color, project.description, project.client_id],
+		).map_err(|error| error.to_string())?;
+	}
+
+	for work_session in &payload.work_sessions {
+		tx.execute(
+			"INSERT INTO work_sessions (id, user_id, name, color, project_id, created_at) VALUES (?1, ?2, ?3, ?4, ?5, COALESCE(?6, CURRENT_TIMESTAMP)) ON CONFLICT(id) DO UPDATE SET name = excluded.name, color = excluded.color, project_id = excluded.project_id, updated_at = CURRENT_TIMESTAMP",
+			params![work_session.id, user_id, work_session.name, work_session.color, work_session.project_id, work_session.created_at],
+		).map_err(|error| error.to_string())?;
+	}
+
+	for session in &payload.sessions {
+		tx.execute(
+			"INSERT INTO sessions (public_id, user_id, app_name, process_name, start_time, end_time, duration, task_name, status, work_session_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) ON CONFLICT(public_id) DO UPDATE SET app_name = excluded.app_name, process_name = excluded.process_name, start_time = excluded.start_time, end_time = excluded.end_time, duration = excluded.duration, task_name = excluded.task_name, status = excluded.status, work_session_id = excluded.work_session_id, updated_at = CURRENT_TIMESTAMP",
+			params![
+				session.public_id,
+				user_id,
+				session.app_name,
+				session.process_name,
+				session.start_time,
+				session.end_time,
+				session.duration,
+				session.task_name,
+				session.status,
+				session.work_session_id,
+			],
+		).map_err(|error| error.to_string())?;
+	}
+
+	tx.commit().map_err(|error| error.to_string())?;
+
+	Ok(BackupImportSummary {
+		settings: payload.settings.len(),
+		applications: payload.applications.len(),
+		clients: payload.clients.len(),
+		projects: payload.projects.len(),
+		work_sessions: payload.work_sessions.len(),
+		sessions: payload.sessions.len(),
+	})
 }

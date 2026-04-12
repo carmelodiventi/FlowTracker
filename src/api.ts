@@ -68,6 +68,15 @@ export interface ProjectDetail {
   client_name: string | null;
 }
 
+export interface BackupImportSummary {
+  settings: number;
+  applications: number;
+  clients: number;
+  projects: number;
+  work_sessions: number;
+  sessions: number;
+}
+
 // ---------------------------------------------------------------------------
 // Identity
 // ---------------------------------------------------------------------------
@@ -143,6 +152,12 @@ export const getSetting = (key: string): Promise<string> =>
 
 export const setSetting = (key: string, value: string): Promise<void> =>
   invoke("set_setting", { key, value });
+
+export const exportBackupJson = (): Promise<string> =>
+  invoke("export_backup_json");
+
+export const importBackupJson = (backup_json: string): Promise<BackupImportSummary> =>
+  invoke("import_backup_json", { backupJson: backup_json });
 
 // ---------------------------------------------------------------------------
 // Accessibility
