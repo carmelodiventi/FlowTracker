@@ -1,6 +1,6 @@
-//! Tauri IPC commands — MongoDB-only, device-ID-scoped.
+//! Tauri IPC commands — transitional storage layer during MongoDB -> SQLite migration.
 
-use crate::MongoState;
+use crate::{db, db::LocalDbState, MongoState};
 use mongodb::bson::{doc, oid::ObjectId, Bson, Document};
 use serde::{Deserialize, Serialize};
 use tauri::{State, Emitter};
@@ -164,100 +164,147 @@ pub async fn get_user_id(state: State<'_, MongoState>) -> Result<String, String>
 // ── Applications ──────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn list_applications(state: State<'_, MongoState>) -> Result<Vec<Application>, String> {
-    let db = &state.db;
-    let did = &state.user_id;
-    let col = db.collection::<Document>("applications");
-    let mut cursor = col.find(doc! { "user_id": did }).sort(doc! { "name": 1_i32 })
-        .await.map_err(|e| e.to_string())?;
-    let mut apps = vec![];
-    while cursor.advance().await.map_err(|e| e.to_string())? {
-        let d = cursor.deserialize_current().map_err(|e| e.to_string())?;
-        if let Ok(oid) = d.get_object_id("_id") {
-            apps.push(Application {
-                id:           oid.to_hex(),
-                name:         d.get_str("name").unwrap_or("").to_string(),
-                process_name: d.get_str("process_name").unwrap_or("").to_string(),
-                icon:         d.get_str("icon").ok().map(|s| s.to_string()),
-                is_enabled:   d.get_bool("is_enabled").unwrap_or(false),
-            });
+pub async fn list_applications(
+    local_state: State<'_, LocalDbState>,
+    mongo_state: State<'_, MongoState>,
+) -> Result<Vec<Application>, String> {
+    let mut apps = db::list_applications(&local_state.db_path, &mongo_state.user_id)?;
+
+    if apps.is_empty() {
+        let col = mongo_state.db.collection::<Document>("applications");
+        let mut cursor = col
+            .find(doc! { "user_id": &mongo_state.user_id })
+            .sort(doc! { "name": 1_i32 })
+            .await
+            .map_err(|e| e.to_string())?;
+
+        while cursor.advance().await.map_err(|e| e.to_string())? {
+            let d = cursor.deserialize_current().map_err(|e| e.to_string())?;
+            let name = d.get_str("name").unwrap_or("").to_string();
+            let process_name = d.get_str("process_name").unwrap_or("").to_string();
+            let icon = d.get_str("icon").ok().map(|s| s.to_string());
+            let is_enabled = d.get_bool("is_enabled").unwrap_or(false);
+            let _ = db::upsert_application(
+                &local_state.db_path,
+                &mongo_state.user_id,
+                &name,
+                &process_name,
+                icon.as_deref(),
+                is_enabled,
+            )?;
         }
+
+        apps = db::list_applications(&local_state.db_path, &mongo_state.user_id)?;
     }
-    Ok(apps)
+
+    Ok(apps
+        .into_iter()
+        .map(|app| Application {
+            id: app.id,
+            name: app.name,
+            process_name: app.process_name,
+            icon: app.icon,
+            is_enabled: app.is_enabled,
+        })
+        .collect())
 }
 
 #[tauri::command]
 pub async fn upsert_application(
+    local_state: State<'_, LocalDbState>,
     state: State<'_, MongoState>,
     name: String, process_name: String, is_enabled: bool,
 ) -> Result<String, String> {
+    let sqlite_id = db::upsert_application(
+        &local_state.db_path,
+        &state.user_id,
+        &name,
+        &process_name,
+        None,
+        is_enabled,
+    )?;
+
     let col = state.db.collection::<Document>("applications");
     let did = &state.user_id;
-    let result = col.update_one(
+    if let Err(error) = col.update_one(
         doc! { "process_name": &process_name, "user_id": did },
         doc! { "$set": { "name": &name, "is_enabled": is_enabled },
                "$setOnInsert": { "process_name": &process_name, "user_id": did } },
-    ).upsert(true).await.map_err(|e| e.to_string())?;
-    if let Some(uid) = result.upserted_id {
-        return Ok(uid.as_object_id().map(|o| o.to_hex()).unwrap_or_default());
+    ).upsert(true).await {
+        eprintln!("[Flow Tracker] Mongo mirror failed for application upsert: {error}");
     }
-    let doc = col.find_one(doc! { "process_name": &process_name, "user_id": did })
-        .await.map_err(|e| e.to_string())?
-        .ok_or("Not found after upsert")?;
-    Ok(doc.get_object_id("_id").map_err(|e| e.to_string())?.to_hex())
+
+    Ok(sqlite_id)
 }
 
 #[tauri::command]
 pub async fn toggle_application(
+    local_state: State<'_, LocalDbState>,
     state: State<'_, MongoState>, id: String, enabled: bool,
 ) -> Result<(), String> {
-    let oid = ObjectId::parse_str(&id).map_err(|e| e.to_string())?;
-    state.db.collection::<Document>("applications")
-        .update_one(doc! { "_id": oid, "user_id": &state.user_id },
-                    doc! { "$set": { "is_enabled": enabled } })
-        .await.map_err(|e| e.to_string())?;
+    db::toggle_application(&local_state.db_path, &state.user_id, &id, enabled)?;
+
+    let apps = state.db.collection::<Document>("applications");
+    let sqlite_apps = db::list_applications(&local_state.db_path, &state.user_id)?;
+    if let Some(app) = sqlite_apps.into_iter().find(|app| app.id == id) {
+        if let Err(error) = apps
+            .update_one(
+                doc! { "process_name": &app.process_name, "user_id": &state.user_id },
+                doc! { "$set": { "name": &app.name, "is_enabled": enabled },
+                       "$setOnInsert": { "process_name": &app.process_name, "user_id": &state.user_id } },
+            )
+            .upsert(true)
+            .await
+        {
+            eprintln!("[Flow Tracker] Mongo mirror failed for application toggle: {error}");
+        }
+    }
+
     Ok(())
 }
 
 #[tauri::command]
-pub async fn scan_running_apps(state: State<'_, MongoState>) -> Result<Vec<Application>, String> {
+pub async fn scan_running_apps(
+    local_state: State<'_, LocalDbState>,
+    state: State<'_, MongoState>,
+) -> Result<Vec<Application>, String> {
     let names = collect_running_app_names()?;
     let col = state.db.collection::<Document>("applications");
     let did = &state.user_id;
 
+    let apps = db::sync_running_applications(&local_state.db_path, did, &names)?;
+
     if !names.is_empty() {
         let names_bson: Vec<Bson> = names.iter().map(|n| Bson::String(n.clone())).collect();
-        col.delete_many(doc! {
+        if let Err(error) = col.delete_many(doc! {
             "user_id": did,
             "is_enabled": false,
             "process_name": { "$nin": names_bson }
-        }).await.map_err(|e| e.to_string())?;
+        }).await {
+            eprintln!("[Flow Tracker] Mongo mirror failed while pruning applications: {error}");
+        }
 
         for name in &names {
-            col.update_one(
+            if let Err(error) = col.update_one(
                 doc! { "process_name": name, "user_id": did },
                 doc! { "$set": { "name": name },
                        "$setOnInsert": { "process_name": name, "user_id": did, "is_enabled": false } },
-            ).upsert(true).await.map_err(|e| e.to_string())?;
+            ).upsert(true).await {
+                eprintln!("[Flow Tracker] Mongo mirror failed while syncing application '{name}': {error}");
+            }
         }
     }
 
-    let mut cursor = col.find(doc! { "user_id": did }).sort(doc! { "name": 1_i32 })
-        .await.map_err(|e| e.to_string())?;
-    let mut apps = vec![];
-    while cursor.advance().await.map_err(|e| e.to_string())? {
-        let d = cursor.deserialize_current().map_err(|e| e.to_string())?;
-        if let Ok(oid) = d.get_object_id("_id") {
-            apps.push(Application {
-                id:           oid.to_hex(),
-                name:         d.get_str("name").unwrap_or("").to_string(),
-                process_name: d.get_str("process_name").unwrap_or("").to_string(),
-                icon:         d.get_str("icon").ok().map(|s| s.to_string()),
-                is_enabled:   d.get_bool("is_enabled").unwrap_or(false),
-            });
-        }
-    }
-    Ok(apps)
+    Ok(apps
+        .into_iter()
+        .map(|app| Application {
+            id: app.id,
+            name: app.name,
+            process_name: app.process_name,
+            icon: app.icon,
+            is_enabled: app.is_enabled,
+        })
+        .collect())
 }
 
 fn collect_running_app_names() -> Result<Vec<String>, String> {
@@ -523,22 +570,38 @@ pub async fn get_sessions_for_export(
 // Settings use compound _id = "{user_id}::{key}" so upserts are O(1).
 
 #[tauri::command]
-pub async fn get_setting(state: State<'_, MongoState>, key: String) -> Result<String, String> {
+pub async fn get_setting(
+    local_state: State<'_, LocalDbState>,
+    state: State<'_, MongoState>,
+    key: String,
+) -> Result<String, String> {
+    if let Some(value) = db::get_setting(&local_state.db_path, &state.user_id, &key)? {
+        return Ok(value);
+    }
+
     let scoped_id = format!("{}::{}", state.user_id, key);
     let col = state.db.collection::<Document>("settings");
     let doc = col.find_one(doc! { "_id": &scoped_id }).await.map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Setting '{}' not found", key))?;
-    doc.get_str("value").map(|s| s.to_string()).map_err(|e| e.to_string())
+    let value = doc.get_str("value").map(|s| s.to_string()).map_err(|e| e.to_string())?;
+    db::set_setting(&local_state.db_path, &state.user_id, &key, &value)?;
+    Ok(value)
 }
 
 #[tauri::command]
 pub async fn set_setting(
+    local_state: State<'_, LocalDbState>,
     state: State<'_, MongoState>, key: String, value: String,
 ) -> Result<(), String> {
+    db::set_setting(&local_state.db_path, &state.user_id, &key, &value)?;
+
     let scoped_id = format!("{}::{}", state.user_id, key);
-    state.db.collection::<Document>("settings")
+    if let Err(error) = state.db.collection::<Document>("settings")
         .update_one(doc! { "_id": &scoped_id }, doc! { "$set": { "value": &value } })
-        .upsert(true).await.map_err(|e| e.to_string())?;
+        .upsert(true).await {
+        eprintln!("[Flow Tracker] Mongo mirror failed for setting '{key}': {error}");
+    }
+
     Ok(())
 }
 
