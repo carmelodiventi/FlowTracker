@@ -83,6 +83,7 @@ export default function Settings() {
   const [defaultBankDetails, setDefaultBankDetails] = useState("");
   const [defaultHourlyRate, setDefaultHourlyRate] = useState("");
   const [defaultVatRate, setDefaultVatRate] = useState("");
+  const [defaultCurrency, setDefaultCurrency] = useState("");
   const [invoiceSaved, setInvoiceSaved] = useState(false);
   const [backupStatus, setBackupStatus] = useState<string | null>(null);
   const [backupBusy, setBackupBusy] = useState(false);
@@ -115,11 +116,13 @@ export default function Settings() {
       getSetting("bank_details_default").catch(() => ""),
       getSetting("hourly_rate_default").catch(() => ""),
       getSetting("vat_rate_default").catch(() => ""),
-    ]).then(([enabled, bank, rate, vat]) => {
+      getSetting("currency_default").catch(() => ""),
+    ]).then(([enabled, bank, rate, vat, currency]) => {
       setInvoiceDefaultsEnabled(enabled === "true" || enabled === "1");
       setDefaultBankDetails(bank || "");
       setDefaultHourlyRate(rate || "");
       setDefaultVatRate(vat || "");
+      setDefaultCurrency(currency || "");
     });
   }, []);
 
@@ -157,6 +160,7 @@ export default function Settings() {
       setSetting("bank_details_default", defaultBankDetails),
       setSetting("hourly_rate_default", defaultHourlyRate),
       setSetting("vat_rate_default", defaultVatRate),
+      setSetting("currency_default", defaultCurrency.trim()),
     ]).catch(console.error);
     setInvoiceSaved(true);
     setTimeout(() => setInvoiceSaved(false), 1500);
@@ -393,6 +397,19 @@ export default function Settings() {
                 value={defaultVatRate}
                 onChange={(e) => setDefaultVatRate(e.target.value)}
                 placeholder="e.g., 20% or 19%"
+                style={{
+                  width: "100%", boxSizing: "border-box", background: "#10141a", border: "1px solid #414752",
+                  borderRadius: 4, padding: "8px 12px", color: "#dfe2eb", fontSize: 13, outline: "none",
+                  fontFamily: "Roboto Mono, monospace", marginBottom: 12,
+                }}
+              />
+
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#c9d1d9", marginBottom: 6 }}>Default Currency (optional)</div>
+              <input
+                type="text"
+                value={defaultCurrency}
+                onChange={(e) => setDefaultCurrency(e.target.value)}
+                placeholder="e.g., EUR, USD, GBP"
                 style={{
                   width: "100%", boxSizing: "border-box", background: "#10141a", border: "1px solid #414752",
                   borderRadius: 4, padding: "8px 12px", color: "#dfe2eb", fontSize: 13, outline: "none",

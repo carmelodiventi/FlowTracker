@@ -58,8 +58,9 @@ function parseLooseNumber(input: string): number {
   return Number.isFinite(value) ? value : 0;
 }
 
-function fmtMoney(n: number): string {
-  return n.toFixed(2);
+function fmtMoney(n: number, currency: string): string {
+  const amount = n.toFixed(2);
+  return currency ? `${amount} ${currency}` : amount;
 }
 
 export default function ExportModal({ onClose }: Props) {
@@ -81,6 +82,7 @@ export default function ExportModal({ onClose }: Props) {
   const [bankDetails, setBankDetails] = useState("");
   const [defaultHourlyRate, setDefaultHourlyRate] = useState("");
   const [defaultVatRate, setDefaultVatRate] = useState("");
+  const [defaultCurrency, setDefaultCurrency] = useState("");
 
   useEffect(() => {
     listAllWorkSessions().then(setAllWorkSessions).catch(console.error);
@@ -91,12 +93,14 @@ export default function ExportModal({ onClose }: Props) {
       getSetting("bank_details_default").catch(() => ""),
       getSetting("hourly_rate_default").catch(() => ""),
       getSetting("vat_rate_default").catch(() => ""),
-    ]).then(([enabled, bank, rate, vat]) => {
+      getSetting("currency_default").catch(() => ""),
+    ]).then(([enabled, bank, rate, vat, currency]) => {
       setIncludeInvoiceMeta(enabled === "true" || enabled === "1");
       setInvoiceNumber("");
       setBankDetails(bank || "");
       setDefaultHourlyRate(rate || "");
       setDefaultVatRate(vat || "");
+      setDefaultCurrency((currency || "").trim().toUpperCase());
     });
   }, []);
 
@@ -181,6 +185,7 @@ export default function ExportModal({ onClose }: Props) {
         bankDetails: bankDetails.trim(),
         hourlyRate,
         vatRate,
+        currency: defaultCurrency,
         subtotal,
         vatAmount,
         totalAmount,
@@ -209,6 +214,7 @@ export default function ExportModal({ onClose }: Props) {
       bankDetails: string;
       hourlyRate: number;
       vatRate: number;
+      currency: string;
       subtotal: number;
       vatAmount: number;
       totalAmount: number;
@@ -367,7 +373,7 @@ export default function ExportModal({ onClose }: Props) {
       if (invoiceMeta.hourlyRate > 0) {
         doc.setFont("helvetica", "normal");
         doc.text("Hourly Rate:", 14, y);
-        doc.text(fmtMoney(invoiceMeta.hourlyRate), W - 14, y, { align: "right" });
+        doc.text(fmtMoney(invoiceMeta.hourlyRate, invoiceMeta.currency), W - 14, y, { align: "right" });
         y += 6;
 
         doc.text("Worked Hours:", 14, y);
@@ -376,21 +382,21 @@ export default function ExportModal({ onClose }: Props) {
 
         doc.setFont("helvetica", "bold");
         doc.text("Subtotal:", 14, y);
-        doc.text(fmtMoney(invoiceMeta.subtotal), W - 14, y, { align: "right" });
+        doc.text(fmtMoney(invoiceMeta.subtotal, invoiceMeta.currency), W - 14, y, { align: "right" });
         y += 6;
       }
 
       if (invoiceMeta.vatRate > 0 && invoiceMeta.subtotal > 0) {
         doc.setFont("helvetica", "normal");
         doc.text(`VAT (${invoiceMeta.vatRate.toFixed(2)}%):`, 14, y);
-        doc.text(fmtMoney(invoiceMeta.vatAmount), W - 14, y, { align: "right" });
+        doc.text(fmtMoney(invoiceMeta.vatAmount, invoiceMeta.currency), W - 14, y, { align: "right" });
         y += 6;
       }
 
       if (invoiceMeta.hourlyRate > 0) {
         doc.setFont("helvetica", "bold");
         doc.text("Total Amount:", 14, y);
-        doc.text(fmtMoney(invoiceMeta.totalAmount), W - 14, y, { align: "right" });
+        doc.text(fmtMoney(invoiceMeta.totalAmount, invoiceMeta.currency), W - 14, y, { align: "right" });
         y += 6;
       }
 
@@ -648,7 +654,8 @@ export default function ExportModal({ onClose }: Props) {
                   <label style={{ display: "block", fontSize: 11, color: C.onSurfaceVar, marginBottom: 4 }}>Auto Calculation</label>
                   <div style={{ ...selectStyle, fontFamily: "Roboto Mono, monospace", cursor: "default", lineHeight: 1.7 }}>
                     Hourly: {defaultHourlyRate || "not set"}<br />
-                    VAT: {defaultVatRate || "0"}
+                    VAT: {defaultVatRate || "0"}<br />
+                    Currency: {defaultCurrency || "not set"}
                   </div>
                 </div>
               </div>
