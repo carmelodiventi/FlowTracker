@@ -1401,3 +1401,17 @@ pub fn import_backup_json(path: &Path, user_id: &str, backup_json: &str) -> Resu
 		sessions: payload.sessions.len(),
 	})
 }
+
+pub fn clear_user_data(path: &Path, user_id: &str) -> Result<(), String> {
+	let mut connection = open_connection(path).map_err(|error| error.to_string())?;
+	let tx = connection.transaction().map_err(|error| error.to_string())?;
+
+	tx.execute("DELETE FROM sessions WHERE user_id = ?1", [user_id]).map_err(|error| error.to_string())?;
+	tx.execute("DELETE FROM work_sessions WHERE user_id = ?1", [user_id]).map_err(|error| error.to_string())?;
+	tx.execute("DELETE FROM projects WHERE user_id = ?1", [user_id]).map_err(|error| error.to_string())?;
+	tx.execute("DELETE FROM clients WHERE user_id = ?1", [user_id]).map_err(|error| error.to_string())?;
+	tx.execute("DELETE FROM applications WHERE user_id = ?1", [user_id]).map_err(|error| error.to_string())?;
+	tx.execute("DELETE FROM settings WHERE user_id = ?1", [user_id]).map_err(|error| error.to_string())?;
+
+	tx.commit().map_err(|error| error.to_string())
+}

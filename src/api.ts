@@ -159,6 +159,9 @@ export const exportBackupJson = (): Promise<string> =>
 export const importBackupJson = (backup_json: string): Promise<BackupImportSummary> =>
   invoke("import_backup_json", { backupJson: backup_json });
 
+export const clearUserData = (): Promise<void> =>
+  invoke("clear_user_data");
+
 // ---------------------------------------------------------------------------
 // Accessibility
 // ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { writeFile, readFile } from "@tauri-apps/plugin-fs";
 import i18n from "../i18n";
-import { getSetting, setSetting, exportBackupJson, importBackupJson } from "../api";
+import { getSetting, setSetting, exportBackupJson, importBackupJson, clearUserData } from "../api";
 import {
   type AIProvider,
   isOllamaAvailable,
@@ -213,6 +213,26 @@ export default function Settings() {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setBackupStatus(`Backup import failed: ${message}`);
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const handleClearDatabase = async () => {
+    const confirmed = window.confirm(
+      "Are you sure you want to clear all local data? This will delete all sessions, projects, clients, applications, and settings. This action cannot be undone."
+    );
+    if (!confirmed) return;
+
+    try {
+      setBackupBusy(true);
+      setBackupStatus(null);
+      await clearUserData();
+      setBackupStatus("Database cleared successfully. Refreshing app...");
+      setTimeout(() => window.location.reload(), 800);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setBackupStatus(`Database clear failed: ${message}`);
     } finally {
       setBackupBusy(false);
     }
@@ -469,6 +489,18 @@ export default function Settings() {
                 }}
               >
                 Import Backup
+              </button>
+              <button
+                onClick={handleClearDatabase}
+                disabled={backupBusy}
+                style={{
+                  background: "#f85149", color: "#fff", border: "none",
+                  borderRadius: 4, padding: "9px 16px", fontWeight: 700, fontSize: 12,
+                  cursor: backupBusy ? "not-allowed" : "pointer", letterSpacing: "0.05em",
+                  textTransform: "uppercase", opacity: backupBusy ? 0.7 : 1,
+                }}
+              >
+                Clear Database
               </button>
             </div>
             {backupStatus && (

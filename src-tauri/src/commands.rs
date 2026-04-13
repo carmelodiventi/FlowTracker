@@ -586,6 +586,24 @@ pub async fn import_backup_json(
     db::import_backup_json(&local_state.db_path, &state.user_id, &backup_json)
 }
 
+#[tauri::command]
+pub async fn clear_user_data(
+    local_state: State<'_, LocalDbState>,
+    state: State<'_, MongoState>,
+) -> Result<(), String> {
+    // Clear SQLite
+    db::clear_user_data(&local_state.db_path, &state.user_id)?;
+
+    // Also clear MongoDB collections for this user
+    let collections = vec!["sessions", "work_sessions", "projects", "clients", "applications", "settings"];
+    for collection_name in collections {
+        let col = state.db.collection::<Document>(collection_name);
+        let _ = col.delete_many(doc! { "user_id": &state.user_id }).await;
+    }
+
+    Ok(())
+}
+
 // ── Accessibility ──────────────────────────────────────────────────────────────
 
 #[tauri::command]
