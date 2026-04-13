@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -69,13 +69,13 @@ function fmtMoney(n: number, currency: string): string {
         style: "currency",
         currency: normalized,
         currencyDisplay: "symbol",
-      }).format(n);
+      }).format(n).replace(/([^\d\s])([\d])/, "$1\u00A0$2");
     } catch {
-      return `${normalized} ${amount}`;
+      return `${normalized}\u00A0${amount}`;
     }
   }
 
-  return `${normalized}${amount}`;
+  return `${normalized}\u00A0${amount}`;
 }
 
 export default function ExportModal({ onClose }: Props) {
@@ -86,6 +86,19 @@ export default function ExportModal({ onClose }: Props) {
   const [loading,    setLoading]    = useState(false);
   const [error,      setError]      = useState<string | null>(null);
   const [hovered,    setHovered]    = useState<Preset | null>(null);
+  const dateInputRef = useRef<(HTMLInputElement | null)[]>([null, null]);
+  const datePickerOpen = useRef(false);
+
+  // Memoize date change handlers to prevent unnecessary re-renders during date picker interaction
+  const handleFromChange = useCallback((v: string) => setCustomFrom(v), []);
+  const handleToChange = useCallback((v: string) => setCustomTo(v), []);
+  
+  // Prevent backdrop click from closing modal while date picker is open
+  const handleBackdropClick = useCallback(() => {
+    if (!datePickerOpen.current) {
+      onClose();
+    }
+  }, [onClose]);
 
   // Filter state
   const [allWorkSessions, setAllWorkSessions] = useState<WorkSession[]>([]);
@@ -523,7 +536,7 @@ export default function ExportModal({ onClose }: Props) {
 
   return (
     <div
-      onClick={onClose}
+      onClick={handleBackdropClick}
       style={{
         position: "fixed", inset: 0,
         background: "rgba(0,0,0,0.8)", backdropFilter: "blur(4px)",
@@ -566,28 +579,43 @@ export default function ExportModal({ onClose }: Props) {
                 sublabel={`${fmtLabel(monthRange()[0])} – ${fmtLabel(monthRange()[1])}`}
                 icon="calendar_month" />
               <Card id="custom" label={t("export.customDateRange")} sublabel={t("export.specifyParams")} icon="date_range">
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 20 }}>
-                  {[
-                    { labelKey: "export.startDate", value: customFrom, max: customTo,   onChange: (v: string) => setCustomFrom(v) },
-                    { labelKey: "export.endDate",   value: customTo,   min: customFrom, onChange: (v: string) => setCustomTo(v)   },
-                  ].map(f => (
-                    <div key={f.labelKey}>
-                      <label style={{ display: "block", fontFamily: "Roboto Mono, monospace", fontSize: 10, color: C.outline, marginBottom: 4, textTransform: "uppercase" }}>
-                        {t(f.labelKey)}
-                      </label>
-                      <div style={{ background: C.surfaceLowest, borderRadius: 4, borderBottom: `2px solid ${C.outlineVar}55`, padding: "6px 8px" }}>
-                        <input
-                          type="date"
-                          value={f.value}
-                          max={"max" in f ? f.max : undefined}
-                          min={"min" in f ? f.min : undefined}
-                          onChange={e => { e.stopPropagation(); f.onChange(e.target.value); }}
-                          onClick={e => e.stopPropagation()}
-                          style={{ background: "transparent", border: "none", outline: "none", width: "100%", fontFamily: "Roboto Mono, monospace", fontSize: 13, color: C.onSurface, colorScheme: "dark" }}
-                        />
-                      </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 20 }} onClick={(e) => e.stopPropagation()}>
+                  <div onMouseDown={(e) => e.stopPropagation()}>
+                    <label style={{ display: "block", fontFamily: "Roboto Mono, monospace", fontSize: 10, color: C.outline, marginBottom: 4, textTransform: "uppercase" }}>
+                      {t("export.startDate")}
+                    </label>
+                    <div style={{ background: C.surfaceLowest, borderRadius: 4, borderBottom: `2px solid ${C.outlineVar}55`, padding: "6px 8px" }} onMouseDown={(e) => e.stopPropagation()}>
+                      <input
+                        ref={(el) => { dateInputRef.current[0] = el; }}
+                        type="date"
+                        value={customFrom}
+                        max={customTo}
+                        onChange={(e) => { e.stopPropagation(); handleFromChange(e.target.value); }}
+                        onMouseDown={(e) => { e.stopPropagation(); datePickerOpen.current = true; }}
+                        onFocus={() => { datePickerOpen.current = true; }}
+                        onBlur={() => { datePickerOpen.current = false; }}
+                        style={{ background: "transparent", border: "none", outline: "none", width: "100%", fontFamily: "Roboto Mono, monospace", fontSize: 13, color: C.onSurface, colorScheme: "dark" }}
+                      />
                     </div>
-                  ))}
+                  </div>
+                  <div onMouseDown={(e) => e.stopPropagation()}>
+                    <label style={{ display: "block", fontFamily: "Roboto Mono, monospace", fontSize: 10, color: C.outline, marginBottom: 4, textTransform: "uppercase" }}>
+                      {t("export.endDate")}
+                    </label>
+                    <div style={{ background: C.surfaceLowest, borderRadius: 4, borderBottom: `2px solid ${C.outlineVar}55`, padding: "6px 8px" }} onMouseDown={(e) => e.stopPropagation()}>
+                      <input
+                        ref={(el) => { dateInputRef.current[1] = el; }}
+                        type="date"
+                        value={customTo}
+                        min={customFrom}
+                        onChange={(e) => { e.stopPropagation(); handleToChange(e.target.value); }}
+                        onMouseDown={(e) => { e.stopPropagation(); datePickerOpen.current = true; }}
+                        onFocus={() => { datePickerOpen.current = true; }}
+                        onBlur={() => { datePickerOpen.current = false; }}
+                        style={{ background: "transparent", border: "none", outline: "none", width: "100%", fontFamily: "Roboto Mono, monospace", fontSize: 13, color: C.onSurface, colorScheme: "dark" }}
+                      />
+                    </div>
+                  </div>
                 </div>
               </Card>
             </div>
