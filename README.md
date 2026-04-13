@@ -20,9 +20,11 @@
 **Flow Tracker** automatically records time on the apps you choose, stores data locally in SQLite, and helps you review your day without the friction of manual start/stop timers.
 
 ## 🚀 Status: Beta
+
 The app is usable, but features and UX may change quickly. Occasional bugs are expected and bug reports are highly appreciated.
 
 ## 📦 Download
+
 Prebuilt binaries are published on the [GitHub Releases](https://github.com/carmelodiventi/FlowTracker/releases) page:
 
 1. Open the **Latest Release**.
@@ -42,6 +44,7 @@ Prebuilt binaries are published on the [GitHub Releases](https://github.com/carm
 ## 📸 Screenshots
 
 ![Dashboard](docs/screenshots/dashboard.png)
+
 <p align="center"><i>Main dashboard with automatic timeline tracking</i></p>
 
 ---
@@ -51,17 +54,20 @@ Prebuilt binaries are published on the [GitHub Releases](https://github.com/carm
 **Desktop App**: Core application logic and desktop packaging (Tauri v2).
 
 ### Prerequisites
+
 - **Node.js 20+** & **pnpm 9+**
 - **Rust** (stable toolchain)
 - [Tauri prerequisites](https://tauri.app/v1/guides/getting-started/prerequisites) for your specific OS.
 
 ### Local Setup (Landing Page)
+
 ```bash
 pnpm install
 pnpm dev
 ```
 
 ### Local Setup (Desktop App)
+
 ```bash
 # Navigate to the app directory (if separate) and run Tauri dev
 pnpm tauri dev
@@ -70,13 +76,15 @@ pnpm tauri dev
 ---
 
 ## 🍎 macOS Permissions (Important)
+
 On macOS, window title tracking requires **Accessibility** permissions:
 
 `System Settings -> Privacy & Security -> Accessibility -> Flow Tracker`
 
-*Without this permission, the app can see process names but window titles (like document names or browser tabs) will remain hidden.*
+_Without this permission, the app can see process names but window titles (like document names or browser tabs) will remain hidden._
 
 ## 🔒 Privacy & Data Ownership
+
 - **Local Storage**: Activity data is stored on your machine in SQLite.
 - **User Control**: No third-party tracking or mandatory cloud service.
 - **Backup Portability**: Export/import JSON backups whenever you want.
@@ -85,15 +93,18 @@ On macOS, window title tracking requires **Accessibility** permissions:
 ---
 
 ## 🗺 Roadmap
+
 - [ ] Smart Idle Detection.
 - [ ] Timeline editing and manual adjustments.
 - [ ] Weekly summary reports (optional/premium).
 - [ ] Direct export to Notion, Linear, and Jira.
 
 ## 🤝 Contributing
+
 Issues and Pull Requests are welcome. When reporting bugs, please include your OS version and steps to reproduce the issue.
 
 ### Pull Request Flow
+
 1. Fork the repository.
 2. Create a feature branch from `main`.
 3. Make your changes and test locally.
@@ -107,6 +118,7 @@ Suggested branch naming:
 - `docs/short-description`
 
 ### Release Process
+
 Releases are automated by GitHub Actions in `.github/workflows/release.yml`.
 
 To publish a new app release:
@@ -131,5 +143,5 @@ You do not need to manually create the GitHub Release first. Pushing the tag is 
 ---
 
 <p align="center">
-  Built with ❤️ by makers, for makers.
+ Built with ❤️ by makers tired of tracking time manually
 </p>
