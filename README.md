@@ -17,7 +17,7 @@
 
 ---
 
-**Flow Tracker** automatically records time on the apps you choose, synchronizes data securely via MongoDB, and helps you review your day without the friction of manual start/stop timers.
+**Flow Tracker** automatically records time on the apps you choose, stores data locally in SQLite, and helps you review your day without the friction of manual start/stop timers.
 
 ## 🚀 Status: Beta
 The app is usable, but features and UX may change quickly. Occasional bugs are expected and bug reports are highly appreciated.
@@ -35,14 +35,14 @@ Prebuilt binaries are published on the [GitHub Releases](https://github.com/carm
 
 - **Zero-effort**: Passive tracking based on active window focus.
 - **Whitelist-based**: Monitor only the apps you care about (e.g., VS Code, Figma).
-- **Cloud-Synced**: Automatic data synchronization via MongoDB (Atlas). Access your flow data from any device.
-- **Backend Persistence**: Robust MongoDB integration for scalable telemetry and cross-platform sync.
+- **Local-First**: Data is stored locally in a SQLite database for fast, private access.
+- **Portable Backups**: Export/import your data as JSON to move between machines.
 - **Lightweight**: Built on Tauri for a minimal memory footprint (< 50MB RAM).
 
 ## 📸 Screenshots
 
 ![Dashboard](docs/screenshots/dashboard.png)
-<p align="center"><i>Main dashboard with synchronized automatic timeline</i></p>
+<p align="center"><i>Main dashboard with automatic timeline tracking</i></p>
 
 ---
 
@@ -53,7 +53,6 @@ Prebuilt binaries are published on the [GitHub Releases](https://github.com/carm
 ### Prerequisites
 - **Node.js 20+** & **pnpm 9+**
 - **Rust** (stable toolchain)
-- **MongoDB Atlas** account (for cloud sync features)
 - [Tauri prerequisites](https://tauri.app/v1/guides/getting-started/prerequisites) for your specific OS.
 
 ### Local Setup (Landing Page)
@@ -77,9 +76,10 @@ On macOS, window title tracking requires **Accessibility** permissions:
 
 *Without this permission, the app can see process names but window titles (like document names or browser tabs) will remain hidden.*
 
-## 🔒 Privacy & Cloud Sync
-- **Secure Sync**: All logs are encrypted and synchronized via MongoDB.
-- **User Control**: No third-party tracking or data collection outside your own sync database.
+## 🔒 Privacy & Data Ownership
+- **Local Storage**: Activity data is stored on your machine in SQLite.
+- **User Control**: No third-party tracking or mandatory cloud service.
+- **Backup Portability**: Export/import JSON backups whenever you want.
 - **Open Source**: Audit the code yourself to see exactly how your data is handled.
 
 ---
