@@ -324,7 +324,7 @@ fn db_session_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DbSession> {
 		duration: row.get(4)?,
 		task_name: row.get(5)?,
 		status: row.get(6)?,
-		work_session_id: row.get(7)?,
+		work_session_id: row.get::<_, Option<i64>>(7)?.map(|id| id.to_string()),
 	})
 }
 
@@ -1306,7 +1306,7 @@ pub fn export_backup_json(path: &Path, user_id: &str) -> Result<String, String> 
 				duration: row.get(5)?,
 				task_name: row.get(6)?,
 				status: row.get(7)?,
-				work_session_id: row.get(8)?,
+				work_session_id: row.get::<_, Option<i64>>(8)?,
 			})
 		})
 		.map_err(|error| error.to_string())?;
