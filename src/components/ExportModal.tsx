@@ -60,7 +60,22 @@ function parseLooseNumber(input: string): number {
 
 function fmtMoney(n: number, currency: string): string {
   const amount = n.toFixed(2);
-  return currency ? `${amount} ${currency}` : amount;
+  const normalized = currency.trim().toUpperCase();
+  if (!normalized) return amount;
+
+  if (/^[A-Z]{3}$/.test(normalized)) {
+    try {
+      return new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: normalized,
+        currencyDisplay: "symbol",
+      }).format(n);
+    } catch {
+      return `${normalized} ${amount}`;
+    }
+  }
+
+  return `${normalized}${amount}`;
 }
 
 export default function ExportModal({ onClose }: Props) {

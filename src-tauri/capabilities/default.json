@@ -8,7 +8,10 @@
   "permissions": [
     "core:default",
     "core:tray:default",
+    "dialog:default",
+    "dialog:allow-open",
     "dialog:allow-save",
+    "fs:allow-read-file",
     "fs:allow-write-file",
     "fs:scope-download",
     "fs:scope-home-recursive"
