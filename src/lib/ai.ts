@@ -170,6 +170,50 @@ Reply with only the task name, nothing else.`;
 }
 
 /**
+ * Generates or rewrites a short session description.
+ * When `draft` is supplied (e.g. selected text) it is used as a hint/context
+ * and the AI rewrites / improves it.  Without a draft it infers from the app
+ * name and duration.
+ * Returns null if AI is not configured or fails.
+ */
+export async function generateSessionDescription(
+  appName: string,
+  durationSecs: number,
+  draft?: string,
+): Promise<string | null> {
+  const config = await loadAIConfig();
+  const model = getModel(config);
+  if (!model) return null;
+
+  const durationMin = Math.round(durationSecs / 60);
+  const context = draft?.trim()
+    ? `App: ${appName} (${durationMin} min). User hint: "${draft.trim()}"`
+    : `App: ${appName} (${durationMin} min)`;
+
+  const instruction = draft?.trim()
+    ? "Rewrite and improve the user's hint into a concise, professional task description (max 8 words, no quotes, no punctuation at end)."
+    : "Suggest a concise, professional task description (max 8 words, no quotes, no punctuation at end) for this session.";
+
+  const prompt = `${instruction} /no_think
+${context}
+Reply with only the description, nothing else.`;
+
+  try {
+    let text: string;
+    if (model === "ollama") {
+      text = await callOllamaNative(config.ollamaModel, prompt);
+    } else {
+      ({ text } = await generateText({ model, prompt, maxOutputTokens: 60 }));
+    }
+    const clean = text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+    return clean.replace(/^["']|["']$/g, "") || null;
+  } catch (err) {
+    console.error("[AI] generateSessionDescription failed:", err);
+    return null;
+  }
+}
+
+/**
  * Generates a professional invoice line item description from a work session.
  * Returns null if AI is not configured or fails.
  */

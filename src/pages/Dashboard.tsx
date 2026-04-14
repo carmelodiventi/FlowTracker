@@ -23,7 +23,7 @@ import {
 } from "../api";
 import type { Session, AppSummary, WorkSession, Project } from "../api";
 import ExportModal from "../components/ExportModal";
-import { suggestWorkSessionName, generateInvoiceDescription } from "../lib/ai";
+import { suggestWorkSessionName, generateInvoiceDescription, generateSessionDescription, loadAIConfig } from "../lib/ai";
 
 // ─── Color helpers ────────────────────────────────────────────────────────────
 
@@ -135,6 +135,14 @@ export default function Dashboard() {
   // Inline description editing state
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editSessionDesc, setEditSessionDesc] = useState("");
+  const [generatingDescSessionId, setGeneratingDescSessionId] = useState<string | null>(null);
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const descInputRef = useRef<HTMLInputElement>(null);
+
+  // Check AI availability once on mount
+  useEffect(() => {
+    loadAIConfig().then((cfg) => setAiEnabled(cfg.provider !== "none")).catch(() => {});
+  }, []);
 
   // Manual session creation state
   const [showManualDialog, setShowManualDialog] = useState(false);
@@ -417,6 +425,22 @@ export default function Dashboard() {
     );
     setWsExpandedSessions((m) => new Map(m).set(wsId, updated));
     await load();
+  };
+
+  const handleGenerateSessionDesc = async (session: Session) => {
+    setGeneratingDescSessionId(session.id);
+    const input = descInputRef.current;
+    const selStart = input?.selectionStart ?? 0;
+    const selEnd = input?.selectionEnd ?? 0;
+    const selectedText = selStart !== selEnd ? editSessionDesc.slice(selStart, selEnd) : undefined;
+    const result = await generateSessionDescription(
+      session.app_name,
+      session.duration ?? 0,
+      selectedText,
+    );
+    setGeneratingDescSessionId(null);
+    if (result) setEditSessionDesc(result);
+    descInputRef.current?.focus();
   };
 
   const openManualDialog = () => {
@@ -1241,37 +1265,68 @@ export default function Dashboard() {
                                     )}
                                   </div>
                                   {editingSessionId === s.id ? (
-                                    <input
-                                      autoFocus
-                                      value={editSessionDesc}
-                                      onChange={(e) => setEditSessionDesc(e.target.value)}
-                                      onBlur={async () => {
-                                        await nameSession(s.id, editSessionDesc.trim()).catch(console.error);
-                                        setEditingSessionId(null);
-                                        await load();
-                                      }}
-                                      onKeyDown={async (e) => {
-                                        if (e.key === "Enter") {
+                                    <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 3 }}>
+                                      <input
+                                        ref={descInputRef}
+                                        autoFocus
+                                        value={editSessionDesc}
+                                        onChange={(e) => setEditSessionDesc(e.target.value)}
+                                        onBlur={async (e) => {
+                                          // Don't save if focus moved to the sparkle button
+                                          if ((e.relatedTarget as HTMLElement)?.dataset?.sparkle === "true") return;
                                           await nameSession(s.id, editSessionDesc.trim()).catch(console.error);
                                           setEditingSessionId(null);
                                           await load();
-                                        }
-                                        if (e.key === "Escape") setEditingSessionId(null);
-                                      }}
-                                      placeholder="Add description…"
-                                      style={{
-                                        marginTop: 3,
-                                        background: "#0d1117",
-                                        border: "1px solid rgba(88,166,255,0.4)",
-                                        borderRadius: 4,
-                                        color: "#e6edf3",
-                                        fontSize: 11,
-                                        padding: "2px 6px",
-                                        outline: "none",
-                                        width: "100%",
-                                        boxSizing: "border-box",
-                                      }}
-                                    />
+                                        }}
+                                        onKeyDown={async (e) => {
+                                          if (e.key === "Enter") {
+                                            await nameSession(s.id, editSessionDesc.trim()).catch(console.error);
+                                            setEditingSessionId(null);
+                                            await load();
+                                          }
+                                          if (e.key === "Escape") setEditingSessionId(null);
+                                        }}
+                                        placeholder="Add description…"
+                                        style={{
+                                          flex: 1,
+                                          background: "#0d1117",
+                                          border: "1px solid rgba(88,166,255,0.4)",
+                                          borderRadius: 4,
+                                          color: "#e6edf3",
+                                          fontSize: 11,
+                                          padding: "2px 6px",
+                                          outline: "none",
+                                          minWidth: 0,
+                                        }}
+                                      />
+                                      {aiEnabled && (
+                                        <button
+                                          data-sparkle="true"
+                                          title={descInputRef.current && descInputRef.current.selectionStart !== descInputRef.current.selectionEnd ? "Rewrite selected text with AI" : "Generate description with AI"}
+                                          disabled={generatingDescSessionId === s.id}
+                                          onMouseDown={(e) => e.preventDefault()}
+                                          onClick={() => handleGenerateSessionDesc(s)}
+                                          style={{
+                                            background: "none",
+                                            border: "none",
+                                            cursor: generatingDescSessionId === s.id ? "wait" : "pointer",
+                                            color: generatingDescSessionId === s.id ? "#484f58" : "#a371f7",
+                                            padding: "2px 3px",
+                                            fontSize: 14,
+                                            lineHeight: 1,
+                                            flexShrink: 0,
+                                            display: "flex",
+                                            alignItems: "center",
+                                          }}
+                                        >
+                                          {generatingDescSessionId === s.id ? (
+                                            <span className="material-symbols-outlined" style={{ fontSize: 14, animation: "pulse 1s infinite" }}>autorenew</span>
+                                          ) : (
+                                            <span style={{ fontSize: 14 }}>✦</span>
+                                          )}
+                                        </button>
+                                      )}
+                                    </div>
                                   ) : (
                                     <div
                                       onClick={() => { setEditingSessionId(s.id); setEditSessionDesc(s.task_name ?? ""); }}
