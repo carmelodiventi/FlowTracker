@@ -40,6 +40,7 @@ Prebuilt binaries are published on the [GitHub Releases](https://github.com/carm
 - **Local-First**: Data is stored locally in a SQLite database for fast, private access.
 - **Portable Backups**: Export/import your data as JSON to move between machines.
 - **Lightweight**: Built on Tauri for a minimal memory footprint (< 50MB RAM).
+- **A pinch of AI :)**: Optional AI assistance to name tasks and describe sessions — runs through your own provider key, never leaves your machine.
 
 ## 📸 Screenshots
 
@@ -89,6 +90,18 @@ _Without this permission, the app can see process names but window titles (like 
 - **User Control**: No third-party tracking or mandatory cloud service.
 - **Backup Portability**: Export/import JSON backups whenever you want.
 - **Open Source**: Audit the code yourself to see exactly how your data is handled.
+
+---
+
+## ✦ A pinch of AI :)
+
+Flow Tracker has optional, opt-in AI features to reduce the cognitive load of naming things:
+
+- **Task name suggestions** — tap the ✦ sparkle button next to any task title (edit or create) and the AI will suggest a concise name based on the apps you were using.
+- **Session descriptions** — inside an individual session, the same sparkle button generates or rewrites a short description. Select part of the text first to rewrite just that snippet.
+- **Context-aware rewrites** — highlight any portion of an existing title or description before clicking ✦ to have it refined rather than replaced.
+
+AI is entirely **optional**. Configure your preferred provider (OpenAI, Mistral, Google Gemini, or a local Ollama model) in **Settings → AI**. If no provider is configured the sparkle buttons are hidden. Your API key is stored locally and requests go directly from your machine to the provider — nothing passes through our servers.
 
 ---
 

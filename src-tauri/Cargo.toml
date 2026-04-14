@@ -1,6 +1,6 @@
 [package]
 name = "FlowTracker"
-version = "0.1.7"
+version = "0.1.8"
 description = "Flow Tracker — Privacy-first automatic time tracking"
 authors = ["Carmelo Di Venti <carmelodiventi@gmail.com>"]
 edition = "2021"
