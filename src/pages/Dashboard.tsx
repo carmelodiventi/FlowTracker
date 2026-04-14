@@ -103,6 +103,7 @@ export default function Dashboard() {
   const [groupName, setGroupName] = useState("");
   const [showGroupDialog, setShowGroupDialog] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmDeleteSelected, setConfirmDeleteSelected] = useState(false);
   const [liveSecs, setLiveSecs] = useState(0);
   const [loading, setLoading] = useState(true);
 
@@ -271,6 +272,13 @@ export default function Dashboard() {
       n.delete(id);
       return n;
     });
+    await load();
+  };
+
+  const handleDeleteSelected = async () => {
+    await Promise.all([...selected].map((id) => deleteSession(id).catch(console.error)));
+    setSelected(new Set());
+    setConfirmDeleteSelected(false);
     await load();
   };
 
@@ -1750,6 +1758,8 @@ export default function Dashboard() {
             left: "50%",
             transform: "translateX(-50%)",
             zIndex: 100,
+            display: "flex",
+            gap: 10,
           }}
         >
           <button
@@ -1777,6 +1787,32 @@ export default function Dashboard() {
               folder_special
             </span>
             {t("dashboard.addToTask", { count: selected.size })}
+          </button>
+          <button
+            onClick={() => setConfirmDeleteSelected(true)}
+            style={{
+              background: "#f85149",
+              color: "#fff",
+              border: "none",
+              borderRadius: 22,
+              padding: "11px 22px",
+              fontWeight: 700,
+              fontSize: 13,
+              cursor: "pointer",
+              boxShadow: "0 4px 24px rgba(248,81,73,0.45)",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              letterSpacing: "0.01em",
+            }}
+          >
+            <span
+              className="material-symbols-outlined"
+              style={{ fontSize: 18 }}
+            >
+              delete
+            </span>
+            {t("dashboard.deleteTask", { count: selected.size })}
           </button>
         </div>
       )}
@@ -1852,6 +1888,92 @@ export default function Dashboard() {
                   await handleDeleteSession(confirmDeleteId);
                   setConfirmDeleteId(null);
                 }}
+                style={{
+                  padding: "8px 18px",
+                  borderRadius: 6,
+                  border: "none",
+                  background: "#f85149",
+                  color: "#fff",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                {t("dashboard.delete")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Bulk Delete Confirm Dialog ── */}
+      {confirmDeleteSelected && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.72)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 300,
+          }}
+          onClick={() => setConfirmDeleteSelected(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: "#161b22",
+              borderRadius: 10,
+              padding: "28px 32px",
+              border: "1px solid rgba(248,81,73,0.3)",
+              maxWidth: 340,
+              width: "100%",
+              display: "flex",
+              flexDirection: "column",
+              gap: 20,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span
+                className="material-symbols-outlined"
+                style={{ color: "#f85149", fontSize: 22 }}
+              >
+                delete
+              </span>
+              <span style={{ fontSize: 15, fontWeight: 600, color: "#f6f6fc" }}>
+                {t("dashboard.deleteTask", { count: selected.size })}
+              </span>
+            </div>
+            <p
+              style={{
+                fontSize: 13,
+                color: "#8b949e",
+                margin: 0,
+                lineHeight: 1.5,
+              }}
+            >
+              {t("dashboard.deleteConfirm")}
+            </p>
+            <div
+              style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}
+            >
+              <button
+                onClick={() => setConfirmDeleteSelected(false)}
+                style={{
+                  padding: "8px 18px",
+                  borderRadius: 6,
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  background: "transparent",
+                  color: "#8b949e",
+                  fontSize: 13,
+                  cursor: "pointer",
+                }}
+              >
+                {t("dashboard.cancel")}
+              </button>
+              <button
+                onClick={handleDeleteSelected}
                 style={{
                   padding: "8px 18px",
                   borderRadius: 6,
