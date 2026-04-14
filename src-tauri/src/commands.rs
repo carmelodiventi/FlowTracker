@@ -409,6 +409,42 @@ pub async fn name_session(
 }
 
 #[tauri::command]
+pub async fn create_manual_session(
+    local_state: State<'_, LocalDbState>,
+    state: State<'_, MongoState>,
+    app_name: String,
+    start_time: String,
+    end_time: String,
+    task_name: Option<String>,
+) -> Result<Session, String> {
+    let duration = crate::watcher::compute_duration(&start_time, &end_time).max(0);
+    let public_id = db::insert_manual_session(
+        &local_state.db_path,
+        &state.user_id,
+        &app_name,
+        &start_time,
+        &end_time,
+        duration,
+        task_name.as_deref(),
+    )?;
+    let _ = state.db.collection::<Document>("sessions")
+        .insert_one(doc! {
+            "public_id": &public_id,
+            "user_id": &state.user_id,
+            "app_name": &app_name,
+            "start_time": &start_time,
+            "end_time": &end_time,
+            "duration": duration,
+            "task_name": task_name.as_ref().map(|s| Bson::String(s.clone())).unwrap_or(Bson::Null),
+            "status": "confirmed",
+        })
+        .await;
+    let session = db::get_session_by_public_id(&local_state.db_path, &state.user_id, &public_id)?
+        .ok_or_else(|| "Session not found after insert".to_string())?;
+    Ok(sqlite_session_to_api(session))
+}
+
+#[tauri::command]
 pub async fn delete_session(
     local_state: State<'_, LocalDbState>,
     state: State<'_, MongoState>, id: String,

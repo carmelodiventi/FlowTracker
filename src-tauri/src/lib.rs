@@ -181,6 +181,7 @@ pub fn run() {
             list_pending_sessions,
             name_session,
             delete_session,
+            create_manual_session,
             stop_active_session,
             pause_tracking,
             resume_tracking,

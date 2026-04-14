@@ -617,6 +617,27 @@ pub fn is_app_whitelisted(path: &Path, user_id: &str, process_name: &str) -> Res
 	Ok(found.is_some())
 }
 
+pub fn insert_manual_session(
+	path: &Path,
+	user_id: &str,
+	app_name: &str,
+	start_time: &str,
+	end_time: &str,
+	duration: i64,
+	task_name: Option<&str>,
+) -> Result<String, String> {
+	let public_id = generate_public_id();
+	let connection = open_connection(path).map_err(|e| e.to_string())?;
+	connection.execute(
+		r#"
+		INSERT INTO sessions (public_id, user_id, app_name, start_time, end_time, duration, task_name, status)
+		VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'confirmed')
+		"#,
+		params![public_id, user_id, app_name, start_time, end_time, duration, task_name],
+	).map_err(|e| e.to_string())?;
+	Ok(public_id)
+}
+
 pub fn open_session(path: &Path, user_id: &str, process_name: &str, now: &str) -> Result<String, String> {
 	let public_id = generate_public_id();
 	let connection = open_connection(path).map_err(|error| error.to_string())?;

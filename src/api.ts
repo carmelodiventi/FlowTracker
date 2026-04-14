@@ -121,6 +121,19 @@ export const listPendingSessions = (): Promise<Session[]> =>
 export const nameSession = (id: string, task_name: string): Promise<void> =>
   invoke("name_session", { id, taskName: task_name });
 
+export const createManualSession = (
+  app_name: string,
+  start_time: string,
+  end_time: string,
+  task_name?: string
+): Promise<Session> =>
+  invoke("create_manual_session", {
+    appName: app_name,
+    startTime: start_time,
+    endTime: end_time,
+    taskName: task_name ?? null,
+  });
+
 export const deleteSession = (id: string): Promise<void> =>
   invoke("delete_session", { id });
 

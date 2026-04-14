@@ -5,6 +5,7 @@ import {
   dailySummary,
   listSessionsForDate,
   deleteSession,
+  nameSession,
   stopActiveSession,
   pauseTracking,
   resumeTracking,
@@ -18,6 +19,7 @@ import {
   listSessionsForWorkSession,
   removeSessionFromWorkSession,
   addSessionToWorkSession,
+  createManualSession,
 } from "../api";
 import type { Session, AppSummary, WorkSession, Project } from "../api";
 import ExportModal from "../components/ExportModal";
@@ -129,6 +131,20 @@ export default function Dashboard() {
   const [invoiceDescText, setInvoiceDescText] = useState<string>("");
   const [generatingInvoiceWsId, setGeneratingInvoiceWsId] = useState<string | null>(null);
   const [isTrackingPaused, setIsTrackingPaused] = useState(false);
+
+  // Inline description editing state
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editSessionDesc, setEditSessionDesc] = useState("");
+
+  // Manual session creation state
+  const [showManualDialog, setShowManualDialog] = useState(false);
+  const [manualAppName, setManualAppName] = useState("");
+  const [manualDate, setManualDate] = useState("");
+  const [manualStart, setManualStart] = useState("09:00");
+  const [manualEnd, setManualEnd] = useState("10:00");
+  const [manualTaskName, setManualTaskName] = useState("");
+  const [manualError, setManualError] = useState<string | null>(null);
+  const [manualSaving, setManualSaving] = useState(false);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isToday = date === todayISO();
@@ -403,6 +419,38 @@ export default function Dashboard() {
     await load();
   };
 
+  const openManualDialog = () => {
+    setManualDate(date);
+    setManualAppName("");
+    setManualStart("09:00");
+    setManualEnd("10:00");
+    setManualTaskName("");
+    setManualError(null);
+    setShowManualDialog(true);
+  };
+
+  const handleCreateManualSession = async () => {
+    setManualError(null);
+    const appName = manualAppName.trim();
+    if (!appName) { setManualError("App name is required."); return; }
+    if (!manualDate) { setManualError("Date is required."); return; }
+    const startISO = `${manualDate}T${manualStart}:00Z`;
+    const endISO   = `${manualDate}T${manualEnd}:00Z`;
+    if (endISO <= startISO) { setManualError("End time must be after start time."); return; }
+    setManualSaving(true);
+    try {
+      await createManualSession(appName, startISO, endISO, manualTaskName.trim() || undefined);
+      setShowManualDialog(false);
+      // Navigate to the date of the new session so it appears immediately
+      setDate(manualDate);
+      await load();
+    } catch (err) {
+      setManualError(String(err));
+    } finally {
+      setManualSaving(false);
+    }
+  };
+
   // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
@@ -500,6 +548,27 @@ export default function Dashboard() {
 
         {/* Right: export + compact daily total */}
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <button
+            onClick={openManualDialog}
+            title="Add a session manually"
+            style={{
+              background: "rgba(255,255,255,0.06)",
+              border: "1px solid rgba(255,255,255,0.1)",
+              borderRadius: 6,
+              color: "#aaabb0",
+              cursor: "pointer",
+              padding: "4px 10px",
+              fontSize: 12,
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+            }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 15 }}>
+              more_time
+            </span>
+            Add Session
+          </button>
           <button
             onClick={() => setShowExport(true)}
             title="Export time report"
@@ -1171,6 +1240,55 @@ export default function Dashboard() {
                                       </span>
                                     )}
                                   </div>
+                                  {editingSessionId === s.id ? (
+                                    <input
+                                      autoFocus
+                                      value={editSessionDesc}
+                                      onChange={(e) => setEditSessionDesc(e.target.value)}
+                                      onBlur={async () => {
+                                        await nameSession(s.id, editSessionDesc.trim()).catch(console.error);
+                                        setEditingSessionId(null);
+                                        await load();
+                                      }}
+                                      onKeyDown={async (e) => {
+                                        if (e.key === "Enter") {
+                                          await nameSession(s.id, editSessionDesc.trim()).catch(console.error);
+                                          setEditingSessionId(null);
+                                          await load();
+                                        }
+                                        if (e.key === "Escape") setEditingSessionId(null);
+                                      }}
+                                      placeholder="Add description…"
+                                      style={{
+                                        marginTop: 3,
+                                        background: "#0d1117",
+                                        border: "1px solid rgba(88,166,255,0.4)",
+                                        borderRadius: 4,
+                                        color: "#e6edf3",
+                                        fontSize: 11,
+                                        padding: "2px 6px",
+                                        outline: "none",
+                                        width: "100%",
+                                        boxSizing: "border-box",
+                                      }}
+                                    />
+                                  ) : (
+                                    <div
+                                      onClick={() => { setEditingSessionId(s.id); setEditSessionDesc(s.task_name ?? ""); }}
+                                      title="Click to edit description"
+                                      style={{
+                                        fontSize: 11,
+                                        color: s.task_name ? "#8b949e" : "#484f58",
+                                        marginTop: 2,
+                                        overflow: "hidden",
+                                        textOverflow: "ellipsis",
+                                        whiteSpace: "nowrap",
+                                        cursor: "text",
+                                      }}
+                                    >
+                                      {s.task_name || "Add description…"}
+                                    </div>
+                                  )}
                                 </div>
                                 <div
                                   style={{ textAlign: "right", flexShrink: 0 }}
@@ -2313,6 +2431,133 @@ export default function Dashboard() {
 
       {/* Export Modal */}
       {showExport && <ExportModal onClose={() => setShowExport(false)} />}
+
+      {/* Manual Session Dialog */}
+      {showManualDialog && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.72)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 200,
+          }}
+          onClick={(e) => { if (e.target === e.currentTarget) setShowManualDialog(false); }}
+        >
+          <div
+            style={{
+              background: "#161b22",
+              border: "1px solid rgba(255,255,255,0.1)",
+              borderRadius: 14,
+              padding: "28px 32px",
+              width: 400,
+              boxShadow: "0 20px 60px rgba(0,0,0,0.7)",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 22, color: "#58a6ff" }}>
+                more_time
+              </span>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#e6edf3" }}>
+                Add Manual Session
+              </h3>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {/* App name */}
+              <div>
+                <label style={{ display: "block", fontSize: 11, color: "#74757a", fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 5 }}>
+                  App / Tool name *
+                </label>
+                <input
+                  autoFocus
+                  value={manualAppName}
+                  onChange={(e) => setManualAppName(e.target.value)}
+                  placeholder="e.g. VS Code, Figma, Chrome…"
+                  style={{ ...inlineInput, width: "100%", boxSizing: "border-box" }}
+                />
+              </div>
+
+              {/* Date */}
+              <div>
+                <label style={{ display: "block", fontSize: 11, color: "#74757a", fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 5 }}>
+                  Date *
+                </label>
+                <input
+                  type="date"
+                  value={manualDate}
+                  onChange={(e) => setManualDate(e.target.value)}
+                  style={{ ...inlineInput, width: "100%", boxSizing: "border-box", colorScheme: "dark" }}
+                />
+              </div>
+
+              {/* Time range */}
+              <div style={{ display: "flex", gap: 12 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: "block", fontSize: 11, color: "#74757a", fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 5 }}>
+                    Start *
+                  </label>
+                  <input
+                    type="time"
+                    value={manualStart}
+                    onChange={(e) => setManualStart(e.target.value)}
+                    style={{ ...inlineInput, width: "100%", boxSizing: "border-box", colorScheme: "dark" }}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: "block", fontSize: 11, color: "#74757a", fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 5 }}>
+                    End *
+                  </label>
+                  <input
+                    type="time"
+                    value={manualEnd}
+                    onChange={(e) => setManualEnd(e.target.value)}
+                    style={{ ...inlineInput, width: "100%", boxSizing: "border-box", colorScheme: "dark" }}
+                  />
+                </div>
+              </div>
+
+              {/* Task / description */}
+              <div>
+                <label style={{ display: "block", fontSize: 11, color: "#74757a", fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 5 }}>
+                  Description (optional)
+                </label>
+                <input
+                  value={manualTaskName}
+                  onChange={(e) => setManualTaskName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleCreateManualSession(); if (e.key === "Escape") setShowManualDialog(false); }}
+                  placeholder="e.g. Client invoicing, Bug fix…"
+                  style={{ ...inlineInput, width: "100%", boxSizing: "border-box" }}
+                />
+              </div>
+
+              {manualError && (
+                <div style={{ fontSize: 12, color: "#f85149", background: "rgba(248,81,73,0.08)", border: "1px solid rgba(248,81,73,0.25)", borderRadius: 6, padding: "7px 10px" }}>
+                  {manualError}
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: "flex", gap: 10, marginTop: 20, justifyContent: "flex-end" }}>
+              <button
+                onClick={() => setShowManualDialog(false)}
+                style={pillBtn("rgba(255,255,255,0.07)", "#8b949e")}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreateManualSession}
+                disabled={manualSaving}
+                style={{ ...pillBtn("#58a6ff", "#0d1117"), opacity: manualSaving ? 0.6 : 1 }}
+              >
+                {manualSaving ? "Saving…" : "Add Session"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Pulse animation for LIVE indicator */}
       <style>{`
