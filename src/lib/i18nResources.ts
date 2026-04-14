@@ -13,8 +13,6 @@ export const en = {
   },
   layout: {
     trackingActive: "Tracking: ACTIVE",
-    systemTray: "System Tray",
-    helperApp: "Flow Tracker Helper",
   },
   toast: {
     whatTask: "What task was this?",
@@ -191,8 +189,6 @@ export const it = {
   },
   layout: {
     trackingActive: "Tracking: ATTIVO",
-    systemTray: "Tray di Sistema",
-    helperApp: "Flow Tracker Helper",
   },
   toast: {
     whatTask: "Che attività era questa?",
@@ -367,8 +363,6 @@ export const fr = {
   },
   layout: {
     trackingActive: "Suivi : ACTIF",
-    systemTray: "Zone de notification",
-    helperApp: "Flow Tracker Helper",
   },
   toast: {
     whatTask: "Quelle tâche était-ce ?",
@@ -548,8 +542,6 @@ export const es = {
   },
   layout: {
     trackingActive: "Seguimiento: ACTIVO",
-    systemTray: "Bandeja del sistema",
-    helperApp: "Flow Tracker Helper",
   },
   toast: {
     whatTask: "¿Cuál era la tarea?",
@@ -729,8 +721,6 @@ export const zh = {
   },
   layout: {
     trackingActive: "追踪：活跃",
-    systemTray: "系统托盘",
-    helperApp: "Flow Tracker 助手",
   },
   toast: {
     whatTask: "这是什么任务？",
@@ -900,8 +890,6 @@ export const ru = {
   },
   layout: {
     trackingActive: "Трекинг: АКТИВЕН",
-    systemTray: "Системный трей",
-    helperApp: "Flow Tracker Helper",
   },
   toast: {
     whatTask: "Какая это была задача?",
@@ -1078,8 +1066,6 @@ export const ja = {
   },
   layout: {
     trackingActive: "追跡：アクティブ",
-    systemTray: "システムトレイ",
-    helperApp: "Flow Tracker ヘルパー",
   },
   toast: {
     whatTask: "どのタスクでしたか？",
@@ -1258,8 +1244,6 @@ export const pt = {
   },
   layout: {
     trackingActive: "Rastreamento: ATIVO",
-    systemTray: "Bandeja do sistema",
-    helperApp: "Flow Tracker Helper",
   },
   toast: {
     whatTask: "Qual era a tarefa?",

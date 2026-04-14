@@ -23,7 +23,7 @@ import {
 } from "../api";
 import type { Session, AppSummary, WorkSession, Project } from "../api";
 import ExportModal from "../components/ExportModal";
-import { suggestWorkSessionName, generateInvoiceDescription, generateSessionDescription, loadAIConfig } from "../lib/ai";
+import { generateTaskName, generateSessionDescription, loadAIConfig } from "../lib/ai";
 
 // ─── Color helpers ────────────────────────────────────────────────────────────
 
@@ -126,10 +126,9 @@ export default function Dashboard() {
   const [wsExpandedSessions, setWsExpandedSessions] = useState<
     Map<string, Session[]>
   >(new Map());
-  const [suggestingWsId, setSuggestingWsId] = useState<string | null>(null);
-  const [invoiceDescWsId, setInvoiceDescWsId] = useState<string | null>(null);
-  const [invoiceDescText, setInvoiceDescText] = useState<string>("");
-  const [generatingInvoiceWsId, setGeneratingInvoiceWsId] = useState<string | null>(null);
+  const [suggestingTaskId, setSuggestingTaskId] = useState<string | null>(null);
+  const editWsNameRef = useRef<HTMLInputElement>(null);
+  const groupNameRef = useRef<HTMLInputElement>(null);
   const [isTrackingPaused, setIsTrackingPaused] = useState(false);
 
   // Inline description editing state
@@ -357,40 +356,48 @@ export default function Dashboard() {
     await load();
   };
 
-  const handleSuggestWsName = async (ws: WorkSession) => {
-    setSuggestingWsId(ws.id);
-    // Build app usage list from sessions assigned to this work session
+  const handleGenerateTaskName = async (ws: WorkSession) => {
+    setSuggestingTaskId(ws.id);
+    const input = editWsNameRef.current;
+    const selStart = input?.selectionStart ?? 0;
+    const selEnd = input?.selectionEnd ?? 0;
+    const draft = selStart !== selEnd
+      ? editWsName.slice(selStart, selEnd)
+      : editWsName.trim() || undefined;
     const wsSessions = wsExpandedSessions.get(ws.id) ?? await listSessionsForWorkSession(ws.id).catch(() => [] as Session[]);
     const appMap = new Map<string, number>();
     for (const s of wsSessions) {
       appMap.set(s.app_name, (appMap.get(s.app_name) ?? 0) + (s.duration ?? 0));
     }
-    // Fallback: use daily summary if no sessions loaded
     const usages = appMap.size > 0
       ? Array.from(appMap.entries()).map(([app, duration_secs]) => ({ app, duration_secs }))
       : summary.map((s) => ({ app: s.app_name, duration_secs: s.total_secs }));
-
-    const suggestion = await suggestWorkSessionName(usages);
-    setSuggestingWsId(null);
-    if (suggestion) {
-      setEditWsName(suggestion);
-    }
+    const result = await generateTaskName(usages, draft);
+    setSuggestingTaskId(null);
+    if (result) setEditWsName(result);
+    editWsNameRef.current?.focus();
   };
 
-  const handleGenerateInvoiceDesc = async (ws: WorkSession) => {
-    setGeneratingInvoiceWsId(ws.id);
-    setInvoiceDescWsId(ws.id);
-    setInvoiceDescText("");
-    const wsSessions = wsExpandedSessions.get(ws.id) ?? await listSessionsForWorkSession(ws.id).catch(() => [] as Session[]);
-    const apps = [...new Set(wsSessions.map((s) => s.app_name))];
-    const desc = await generateInvoiceDescription({
-      sessionName: ws.name,
-      projectName: ws.project_name ?? undefined,
-      durationHours: ws.total_secs / 3600,
-      apps,
-    });
-    setGeneratingInvoiceWsId(null);
-    setInvoiceDescText(desc ?? "Could not generate description — check your AI settings.");
+  const handleGenerateGroupTaskName = async () => {
+    setSuggestingTaskId("group");
+    const input = groupNameRef.current;
+    const selStart = input?.selectionStart ?? 0;
+    const selEnd = input?.selectionEnd ?? 0;
+    const draft = selStart !== selEnd
+      ? groupName.slice(selStart, selEnd)
+      : groupName.trim() || undefined;
+    const selectedSessions = [...selected]
+      .map(id => sessions.find(s => s.id === id))
+      .filter((s): s is Session => !!s);
+    const appMap = new Map<string, number>();
+    for (const s of selectedSessions) {
+      appMap.set(s.app_name, (appMap.get(s.app_name) ?? 0) + (s.duration ?? 0));
+    }
+    const usages = Array.from(appMap.entries()).map(([app, duration_secs]) => ({ app, duration_secs }));
+    const result = await generateTaskName(usages, draft);
+    setSuggestingTaskId(null);
+    if (result) setGroupName(result);
+    groupNameRef.current?.focus();
   };
 
   const handleToggleWsCollapse = async (wsId: string) => {
@@ -1320,9 +1327,9 @@ export default function Dashboard() {
                                           }}
                                         >
                                           {generatingDescSessionId === s.id ? (
-                                            <span className="material-symbols-outlined" style={{ fontSize: 14, animation: "pulse 1s infinite" }}>autorenew</span>
+                                            <span className="material-symbols-outlined" style={{ fontSize: 16, animation: "pulse 1s infinite" }}>autorenew</span>
                                           ) : (
-                                            <span style={{ fontSize: 14 }}>✦</span>
+                                            <span style={{ fontSize: 18, color: "#ffffff" }}>✦</span>
                                           )}
                                         </button>
                                       )}
@@ -1510,7 +1517,9 @@ export default function Dashboard() {
                                 flex: 1,
                               }}
                             >
+                              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                               <input
+                                ref={editWsNameRef}
                                 autoFocus
                                 value={editWsName}
                                 onChange={(e) => setEditWsName(e.target.value)}
@@ -1521,9 +1530,29 @@ export default function Dashboard() {
                                     setEditingWsId(null);
                                   }
                                 }}
-                                style={inlineInput}
+                                style={{ ...inlineInput, flex: 1 }}
                                 placeholder={t("dashboard.taskNamePlaceholder")}
                               />
+                              {aiEnabled && (
+                                <button
+                                  title="Generate title with AI (select text to rewrite)"
+                                  disabled={suggestingTaskId === ws.id}
+                                  onMouseDown={(e) => e.preventDefault()}
+                                  onClick={() => handleGenerateTaskName(ws)}
+                                  style={{
+                                    background: "none", border: "none",
+                                    cursor: suggestingTaskId === ws.id ? "wait" : "pointer",
+                                    color: suggestingTaskId === ws.id ? "#484f58" : "#a371f7",
+                                    padding: "2px 4px", fontSize: 14, lineHeight: 1,
+                                    flexShrink: 0, display: "flex", alignItems: "center",
+                                  }}
+                                >
+                                  {suggestingTaskId === ws.id
+                                    ? <span className="material-symbols-outlined" style={{ fontSize: 16, animation: "pulse 1s infinite" }}>autorenew</span>
+                                    : <span style={{ fontSize: 18, color: "#ffffff" }}>✦</span>}
+                                </button>
+                              )}
+                              </div>
                               <div
                                 style={{
                                   display: "flex",
@@ -1587,19 +1616,6 @@ export default function Dashboard() {
                                   style={pillBtn("#3fb950", "#0d1117")}
                                 >
                                   {t("dashboard.save")}
-                                </button>
-                                <button
-                                  onClick={() => handleSuggestWsName(ws)}
-                                  disabled={suggestingWsId === ws.id}
-                                  title="Suggest name with AI"
-                                  style={{
-                                    ...pillBtn("rgba(88,166,255,0.12)", "#58a6ff"),
-                                    border: "1px solid rgba(88,166,255,0.3)",
-                                    opacity: suggestingWsId === ws.id ? 0.6 : 1,
-                                    cursor: suggestingWsId === ws.id ? "wait" : "pointer",
-                                  }}
-                                >
-                                  {suggestingWsId === ws.id ? t("dashboard.suggesting") : t("dashboard.suggest")}
                                 </button>
                                 <button
                                   onClick={() => setEditingWsId(null)}
@@ -1707,36 +1723,6 @@ export default function Dashboard() {
                                 </span>
                               </button>
 
-                              {/* AI: Invoice description */}
-                              <button
-                                onClick={() => {
-                                  if (invoiceDescWsId === ws.id) {
-                                    setInvoiceDescWsId(null);
-                                    setInvoiceDescText("");
-                                  } else {
-                                    handleGenerateInvoiceDesc(ws);
-                                  }
-                                }}
-                                disabled={generatingInvoiceWsId === ws.id}
-                                title="Generate invoice description with AI"
-                                style={{
-                                  background: invoiceDescWsId === ws.id ? "rgba(88,166,255,0.1)" : "none",
-                                  border: "none",
-                                  color: invoiceDescWsId === ws.id ? "#58a6ff" : "#484f58",
-                                  cursor: generatingInvoiceWsId === ws.id ? "wait" : "pointer",
-                                  padding: 4,
-                                  borderRadius: 4,
-                                  display: "flex",
-                                  alignItems: "center",
-                                  fontSize: 14,
-                                  transition: "color 0.12s",
-                                }}
-                                onMouseEnter={(e) => { if (invoiceDescWsId !== ws.id) e.currentTarget.style.color = "#8b949e"; }}
-                                onMouseLeave={(e) => { if (invoiceDescWsId !== ws.id) e.currentTarget.style.color = "#484f58"; }}
-                              >
-                                {generatingInvoiceWsId === ws.id ? "…" : "✨"}
-                              </button>
-
                               <button
                                 onClick={() => handleDeleteWorkSession(ws.id)}
                                 title="Delete task"
@@ -1768,37 +1754,6 @@ export default function Dashboard() {
                             </>
                           )}
                         </div>
-
-                        {/* ── AI Invoice Description panel ── */}
-                        {invoiceDescWsId === ws.id && (
-                          <div style={{
-                            margin: "0 0 2px",
-                            padding: "12px 16px",
-                            background: "rgba(88,166,255,0.06)",
-                            borderTop: "1px solid rgba(88,166,255,0.15)",
-                            borderBottom: "1px solid rgba(88,166,255,0.1)",
-                          }}>
-                            <div style={{ fontSize: 11, color: "#58a6ff", fontWeight: 600, marginBottom: 6, letterSpacing: "0.04em", textTransform: "uppercase" }}>
-                              {t("dashboard.invoiceDesc")}
-                            </div>
-                            {generatingInvoiceWsId === ws.id ? (
-                              <div style={{ fontSize: 13, color: "#8b949e", fontStyle: "italic" }}>{t("dashboard.generating")}</div>
-                            ) : (
-                              <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-                                <p style={{ flex: 1, margin: 0, fontSize: 13, color: "#c9d1d9", lineHeight: 1.6 }}>
-                                  {invoiceDescText}
-                                </p>
-                                <button
-                                  onClick={() => navigator.clipboard.writeText(invoiceDescText)}
-                                  title="Copy to clipboard"
-                                  style={{ background: "none", border: "1px solid #414752", borderRadius: 4, padding: "4px 8px", color: "#8b949e", cursor: "pointer", fontSize: 11, whiteSpace: "nowrap", flexShrink: 0 }}
-                                >
-                                  {t("dashboard.copy")}
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        )}
 
                         {/* ── Expanded sessions list ── */}
                         {isExpanded && (
@@ -2305,7 +2260,9 @@ export default function Dashboard() {
             ) : (
               /* ── New task form ── */
               <>
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <input
+              ref={groupNameRef}
               autoFocus
               value={groupName}
               onChange={(e) => setGroupName(e.target.value)}
@@ -2314,8 +2271,28 @@ export default function Dashboard() {
                 if (e.key === "Escape") resetGroupDialog();
               }}
               placeholder={t("dashboard.taskNamePlaceholder")}
-              style={{ ...inlineInput, width: "100%", boxSizing: "border-box" }}
+              style={{ ...inlineInput, flex: 1, boxSizing: "border-box" }}
             />
+            {aiEnabled && (
+              <button
+                title="Generate name with AI"
+                disabled={suggestingTaskId === "group"}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => handleGenerateGroupTaskName()}
+                style={{
+                  background: "none", border: "none",
+                  cursor: suggestingTaskId === "group" ? "wait" : "pointer",
+                  color: suggestingTaskId === "group" ? "#484f58" : "#a371f7",
+                  padding: "2px 4px", fontSize: 14, lineHeight: 1,
+                  flexShrink: 0, display: "flex", alignItems: "center",
+                }}
+              >
+                {suggestingTaskId === "group"
+                  ? <span className="material-symbols-outlined" style={{ fontSize: 16, animation: "pulse 1s infinite" }}>autorenew</span>
+                  : <span style={{ fontSize: 18, color: "#ffffff" }}>✦</span>}
+              </button>
+            )}
+            </div>
 
             {/* ── Project selector ── */}
             <div

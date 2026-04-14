@@ -1176,7 +1176,7 @@ pub fn list_sessions_for_work_session(path: &Path, user_id: &str, work_session_i
 	let connection = open_connection(path).map_err(|error| error.to_string())?;
 	let mut statement = connection.prepare(
 		r#"
-		SELECT public_id, app_name, start_time, end_time, duration, task_name, status, CAST(work_session_id AS TEXT)
+		SELECT public_id, app_name, start_time, end_time, duration, task_name, status, work_session_id
 		FROM sessions
 		WHERE user_id = ?1 AND work_session_id = ?2
 		ORDER BY start_time ASC

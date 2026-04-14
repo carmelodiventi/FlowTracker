@@ -98,26 +98,18 @@ function getModel(config: AIConfig) {
 }
 
 /**
- * Suggests a short work session name from app usage + rich context.
- * window_titles: titles seen during session (e.g. "auth.ts — my-project — VS Code").
- * git_branch / git_commit: optional git context detected from process path.
+ * Generates or rewrites a short task (work session) title.
+ * When `draft` is supplied it is used as a hint — the AI improves/rewrites it.
+ * Without a draft it infers a name from the app usages.
  * Returns null if AI is not configured or fails.
  */
-export async function suggestWorkSessionName(
+export async function generateTaskName(
   appUsages: { app: string; duration_secs: number }[],
-  context?: {
-    window_titles?: string[];
-    git_branch?: string | null;
-    git_commit?: string | null;
-  },
+  draft?: string,
 ): Promise<string | null> {
   const config = await loadAIConfig();
   const model = getModel(config);
-  console.log("[AI] suggestWorkSessionName — provider:", config.provider, "model:", model ? "ok" : "null (not configured)");
-  if (!model) {
-    console.warn("[AI] No model — go to Settings → AI Integration and pick a provider.");
-    return null;
-  }
+  if (!model) return null;
 
   const appList = appUsages
     .sort((a, b) => b.duration_secs - a.duration_secs)
@@ -125,46 +117,29 @@ export async function suggestWorkSessionName(
     .map(({ app, duration_secs }) => `${app} (${Math.round(duration_secs / 60)} min)`)
     .join(", ");
 
-  const parts: string[] = [`Apps used: ${appList}`];
+  const context = draft?.trim()
+    ? `Apps used: ${appList}. User hint: "${draft.trim()}"`
+    : `Apps used: ${appList}`;
 
-  if (context?.window_titles?.length) {
-    // Keep top 6 titles; strip repetitive suffixes like " — VS Code"
-    const cleanTitles = context.window_titles
-      .slice(0, 6)
-      .map(t => t.replace(/\s[—–-]\s*(Visual Studio Code|VS Code|Code|Google Chrome|Firefox|Safari)$/i, "").trim())
-      .filter(Boolean);
-    if (cleanTitles.length) parts.push(`Window titles: ${cleanTitles.join(" | ")}`);
-  }
+  const instruction = draft?.trim()
+    ? "Rewrite and improve the user's hint into a concise task title (3-6 words, no quotes, no punctuation at end)."
+    : "Suggest a single short task title (3-6 words, no quotes, no punctuation at end) describing what the user was working on.";
 
-  if (context?.git_branch) {
-    parts.push(`Git branch: ${context.git_branch}`);
-  }
-  if (context?.git_commit) {
-    parts.push(`Last commit: ${context.git_commit}`);
-  }
-
-  const contextBlock = parts.join("\n");
-
-  const prompt = `You are a concise work-session naming assistant. /no_think
-${contextBlock}
-Suggest a single short task name (3-6 words, no quotes, no punctuation at end) that describes what the user was working on.
-Prefer specific names based on file/branch names over generic app names.
-Reply with only the task name, nothing else.`;
-
-  console.log("[AI] prompt:", prompt);
+  const prompt = `${instruction} /no_think
+${context}
+Reply with only the task title, nothing else.`;
 
   try {
     let text: string;
     if (model === "ollama") {
       text = await callOllamaNative(config.ollamaModel, prompt);
     } else {
-      ({ text } = await generateText({ model, prompt, maxOutputTokens: 200 }));
+      ({ text } = await generateText({ model, prompt, maxOutputTokens: 60 }));
     }
-    console.log("[AI] suggestion result:", JSON.stringify(text));
     const clean = text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
     return clean.replace(/^["']|["']$/g, "") || null;
   } catch (err) {
-    console.error("[AI] suggestWorkSessionName failed:", err);
+    console.error("[AI] generateTaskName failed:", err);
     return null;
   }
 }
@@ -209,57 +184,6 @@ Reply with only the description, nothing else.`;
     return clean.replace(/^["']|["']$/g, "") || null;
   } catch (err) {
     console.error("[AI] generateSessionDescription failed:", err);
-    return null;
-  }
-}
-
-/**
- * Generates a professional invoice line item description from a work session.
- * Returns null if AI is not configured or fails.
- */
-export async function generateInvoiceDescription(opts: {
-  sessionName: string;
-  projectName?: string;
-  clientName?: string;
-  durationHours: number;
-  apps: string[];
-}): Promise<string | null> {
-  const config = await loadAIConfig();
-  const model = getModel(config);
-  console.log("[AI] generateInvoiceDescription — provider:", config.provider, "model:", model ? "ok" : "null (not configured)");
-  if (!model) {
-    console.warn("[AI] No model — go to Settings → AI Integration and pick a provider.");
-    return null;
-  }
-
-  const context = [
-    opts.projectName ? `Project: ${opts.projectName}` : null,
-    opts.clientName ? `Client: ${opts.clientName}` : null,
-    `Task: ${opts.sessionName}`,
-    `Duration: ${opts.durationHours.toFixed(1)} hours`,
-    opts.apps.length ? `Tools used: ${opts.apps.slice(0, 4).join(", ")}` : null,
-  ]
-    .filter(Boolean)
-    .join(", ");
-
-  const prompt = `Write a concise, professional invoice line item description (max 2 sentences) for the following work:
-${context}
-Reply with only the description, no bullet points, no markdown.`;
-
-  console.log("[AI] invoice prompt:", prompt);
-
-  try {
-    let text: string;
-    if (model === "ollama") {
-      text = await callOllamaNative(config.ollamaModel, prompt);
-    } else {
-      ({ text } = await generateText({ model, prompt, maxOutputTokens: 300 }));
-    }
-    console.log("[AI] invoice result:", JSON.stringify(text));
-    const clean = text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-    return clean || null;
-  } catch (err) {
-    console.error("[AI] generateInvoiceDescription failed:", err);
     return null;
   }
 }
