@@ -338,6 +338,9 @@ export default function Dashboard() {
     ).catch(console.error);
     setSelected(new Set());
     resetGroupDialog();
+    // Refresh expanded sessions for the target work session so the UI updates immediately
+    const updated = await listSessionsForWorkSession(groupExistingWsId).catch(() => [] as Session[]);
+    setWsExpandedSessions((m) => new Map(m).set(groupExistingWsId, updated));
     await load();
   };
 
@@ -1781,29 +1784,107 @@ export default function Dashboard() {
                                       "1px solid rgba(255,255,255,0.04)",
                                   }}
                                 >
-                                  <span
+                                  <div
                                     style={{
-                                      fontSize: 12,
-                                      color: "#8b949e",
                                       flex: 1,
                                       minWidth: 0,
-                                      overflow: "hidden",
-                                      textOverflow: "ellipsis",
-                                      whiteSpace: "nowrap",
+                                      display: "flex",
+                                      flexDirection: "column",
+                                      gap: 2,
                                     }}
                                   >
-                                    {s.app_name}
-                                    {s.task_name ? (
-                                      <span
+                                    <span
+                                      style={{
+                                        fontSize: 12,
+                                        color: "#8b949e",
+                                        overflow: "hidden",
+                                        textOverflow: "ellipsis",
+                                        whiteSpace: "nowrap",
+                                      }}
+                                    >
+                                      {s.app_name}
+                                    </span>
+                                    {editingSessionId === s.id ? (
+                                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                        <input
+                                          ref={descInputRef}
+                                          autoFocus
+                                          value={editSessionDesc}
+                                          onChange={(e) => setEditSessionDesc(e.target.value)}
+                                          onBlur={async (e) => {
+                                            if ((e.relatedTarget as HTMLElement)?.dataset?.sparkle === "true") return;
+                                            await nameSession(s.id, editSessionDesc.trim()).catch(console.error);
+                                            setEditingSessionId(null);
+                                            const updated = await listSessionsForWorkSession(ws.id).catch(() => [] as Session[]);
+                                            setWsExpandedSessions((m) => new Map(m).set(ws.id, updated));
+                                            await load();
+                                          }}
+                                          onKeyDown={async (e) => {
+                                            if (e.key === "Enter") {
+                                              await nameSession(s.id, editSessionDesc.trim()).catch(console.error);
+                                              setEditingSessionId(null);
+                                              const updated = await listSessionsForWorkSession(ws.id).catch(() => [] as Session[]);
+                                              setWsExpandedSessions((m) => new Map(m).set(ws.id, updated));
+                                              await load();
+                                            }
+                                            if (e.key === "Escape") setEditingSessionId(null);
+                                          }}
+                                          placeholder="Add description…"
+                                          style={{
+                                            flex: 1,
+                                            background: "#0d1117",
+                                            border: "1px solid rgba(88,166,255,0.4)",
+                                            borderRadius: 4,
+                                            color: "#e6edf3",
+                                            fontSize: 11,
+                                            padding: "2px 6px",
+                                            outline: "none",
+                                            minWidth: 0,
+                                          }}
+                                        />
+                                        {aiEnabled && (
+                                          <button
+                                            data-sparkle="true"
+                                            title="Generate description with AI"
+                                            disabled={generatingDescSessionId === s.id}
+                                            onMouseDown={(e) => e.preventDefault()}
+                                            onClick={() => handleGenerateSessionDesc(s)}
+                                            style={{
+                                              background: "none",
+                                              border: "none",
+                                              cursor: generatingDescSessionId === s.id ? "wait" : "pointer",
+                                              color: generatingDescSessionId === s.id ? "#484f58" : "#a371f7",
+                                              padding: "2px 3px",
+                                              fontSize: 14,
+                                              lineHeight: 1,
+                                              flexShrink: 0,
+                                              display: "flex",
+                                              alignItems: "center",
+                                            }}
+                                          >
+                                            {generatingDescSessionId === s.id
+                                              ? <span className="material-symbols-outlined" style={{ fontSize: 16, animation: "pulse 1s infinite" }}>autorenew</span>
+                                              : <span style={{ fontSize: 18, color: "#ffffff" }}>✦</span>}
+                                          </button>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <div
+                                        onClick={() => { setEditingSessionId(s.id); setEditSessionDesc(s.task_name ?? ""); }}
+                                        title="Click to edit description"
                                         style={{
-                                          marginLeft: 6,
-                                          color: "#484f58",
+                                          fontSize: 11,
+                                          color: s.task_name ? "#8b949e" : "#484f58",
+                                          cursor: "text",
+                                          overflow: "hidden",
+                                          textOverflow: "ellipsis",
+                                          whiteSpace: "nowrap",
                                         }}
                                       >
-                                        · {s.task_name}
-                                      </span>
-                                    ) : null}
-                                  </span>
+                                        {s.task_name || "Add description…"}
+                                      </div>
+                                    )}
+                                  </div>
                                   <span
                                     style={{
                                       fontSize: 11,
