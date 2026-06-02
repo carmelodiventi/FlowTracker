@@ -176,7 +176,7 @@ export const clearUserData = (): Promise<void> =>
   invoke("clear_user_data");
 
 // ---------------------------------------------------------------------------
-// Accessibility
+// Screen Recording
 // ---------------------------------------------------------------------------
 
 export const checkAccessibility = (): Promise<boolean> =>
@@ -184,6 +184,12 @@ export const checkAccessibility = (): Promise<boolean> =>
 
 export const openAccessibilitySettings = (): Promise<void> =>
   invoke("open_accessibility_settings");
+
+export const getLaunchOnStartup = (): Promise<boolean> =>
+  invoke("get_launch_on_startup");
+
+export const setLaunchOnStartup = (enabled: boolean): Promise<void> =>
+  invoke("set_launch_on_startup", { enabled });
 
 // ---------------------------------------------------------------------------
 // Task names

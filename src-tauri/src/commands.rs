@@ -640,15 +640,18 @@ pub async fn clear_user_data(
     Ok(())
 }
 
-// ── Accessibility ──────────────────────────────────────────────────────────────
+// ── Screen Recording ───────────────────────────────────────────────────────────
 
 #[tauri::command]
 pub fn check_accessibility() -> bool {
     #[cfg(target_os = "macos")]
     {
         #[link(name = "ApplicationServices", kind = "framework")]
-        extern "C" { fn AXIsProcessTrusted() -> bool; }
-        unsafe { AXIsProcessTrusted() }
+        extern "C" {
+            fn CGPreflightScreenCaptureAccess() -> bool;
+            fn AXIsProcessTrusted() -> bool;
+        }
+        unsafe { CGPreflightScreenCaptureAccess() || AXIsProcessTrusted() }
     }
     #[cfg(not(target_os = "macos"))] { true }
 }
@@ -658,8 +661,26 @@ pub fn open_accessibility_settings() {
     #[cfg(target_os = "macos")]
     {
         let _ = std::process::Command::new("open")
-            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
             .spawn();
+    }
+}
+
+#[tauri::command]
+pub fn get_launch_on_startup(app: tauri::AppHandle) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+
+    app.autolaunch().is_enabled().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_launch_on_startup(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+
+    if enabled {
+        app.autolaunch().enable().map_err(|e| e.to_string())
+    } else {
+        app.autolaunch().disable().map_err(|e| e.to_string())
     }
 }
 

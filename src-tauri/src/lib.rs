@@ -59,6 +59,10 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .setup(move |app| {
             let handle = app.handle().clone();
             let local_db_path = init_local_db()?;
@@ -196,6 +200,8 @@ pub fn run() {
             // Accessibility
             check_accessibility,
             open_accessibility_settings,
+            get_launch_on_startup,
+            set_launch_on_startup,
             // Task names
             list_task_names,
             rename_task_group,

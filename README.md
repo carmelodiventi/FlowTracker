@@ -78,11 +78,11 @@ pnpm tauri dev
 
 ## 🍎 macOS Permissions (Important)
 
-On macOS, window title tracking requires **Accessibility** permissions:
+On macOS, window title tracking requires **Screen Recording** permissions:
 
-`System Settings -> Privacy & Security -> Accessibility -> Flow Tracker`
+`System Settings -> Privacy & Security -> Screen Recording -> Flow Tracker`
 
-_Without this permission, the app can see process names but window titles (like document names or browser tabs) will remain hidden._
+_Without this permission, the app can see process names but window titles (like document names or browser tabs) will remain hidden. If you rebuild the app, macOS may ask you to grant permission again for the new binary._
 
 ## 🔒 Privacy & Data Ownership
 

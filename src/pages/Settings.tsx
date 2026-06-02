@@ -3,7 +3,16 @@ import { useTranslation } from "react-i18next";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { writeFile, readFile } from "@tauri-apps/plugin-fs";
 import i18n from "../i18n";
-import { getSetting, setSetting, exportBackupJson, importBackupJson, clearUserData } from "../api";
+import {
+  getSetting,
+  setSetting,
+  exportBackupJson,
+  importBackupJson,
+  clearUserData,
+  openAccessibilitySettings,
+  getLaunchOnStartup,
+  setLaunchOnStartup,
+} from "../api";
 import {
   type AIProvider,
   isOllamaAvailable,
@@ -87,6 +96,9 @@ export default function Settings() {
   const [invoiceSaved, setInvoiceSaved] = useState(false);
   const [backupStatus, setBackupStatus] = useState<string | null>(null);
   const [backupBusy, setBackupBusy] = useState(false);
+  const [launchAtStartup, setLaunchAtStartup] = useState<boolean | null>(null);
+  const [startupBusy, setStartupBusy] = useState(false);
+  const [systemStatus, setSystemStatus] = useState<string | null>(null);
 
   // Language picker state — read the currently active language
   const [currentLang, setCurrentLang] = useState(i18n.language?.slice(0, 2) ?? "en");
@@ -124,6 +136,13 @@ export default function Settings() {
       setDefaultVatRate(vat || "");
       setDefaultCurrency(currency || "");
     });
+
+    getLaunchOnStartup()
+      .then(setLaunchAtStartup)
+      .catch(() => {
+        setLaunchAtStartup(false);
+        setSystemStatus("Launch at startup is not available in this build.");
+      });
   }, []);
 
   // Check Ollama when provider switches to ollama
@@ -235,6 +254,28 @@ export default function Settings() {
       setBackupStatus(`Database clear failed: ${message}`);
     } finally {
       setBackupBusy(false);
+    }
+  };
+
+  const handleOpenAccessibility = async () => {
+    await openAccessibilitySettings().catch(console.error);
+    setSystemStatus("System Settings opened. Enable Screen Recording, then fully quit and reopen Flow Tracker.");
+  };
+
+  const handleToggleStartup = async () => {
+    if (launchAtStartup == null) return;
+
+    const next = !launchAtStartup;
+    try {
+      setStartupBusy(true);
+      await setLaunchOnStartup(next);
+      setLaunchAtStartup(next);
+      setSystemStatus(next ? "Flow Tracker will open at login." : "Flow Tracker will no longer open at login.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setSystemStatus(`Could not update startup setting: ${message}`);
+    } finally {
+      setStartupBusy(false);
     }
   };
 
@@ -361,6 +402,68 @@ export default function Settings() {
             ))}
           </div>
         )}
+
+        {/* ── Invoice Defaults ───────────────────────────────────────────── */}
+        <div style={{ marginTop: 40, maxWidth: 560 }}>
+          <div style={{ marginBottom: 16 }}>
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: "#f0f6fc", margin: "0 0 4px" }}>
+              System Permissions
+            </h2>
+            <p style={{ fontSize: 13, color: "#8b919d", margin: 0 }}>
+              Manage macOS Screen Recording access and control whether the app launches at login.
+            </p>
+          </div>
+
+          <div style={{ background: "#181c22", border: "1px solid rgba(65,71,82,0.3)", borderRadius: 6, padding: "20px 24px", display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "#c9d1d9", marginBottom: 4 }}>Screen Recording</div>
+                <div style={{ fontSize: 12, color: "#8b919d", maxWidth: 340 }}>
+                  Open System Settings to grant permission. macOS may not apply changes until the app is fully restarted.
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  onClick={handleOpenAccessibility}
+                  style={{
+                    background: "#58a6ff", color: "#001c38", border: "none", borderRadius: 4,
+                    padding: "8px 12px", fontWeight: 700, fontSize: 12, cursor: "pointer",
+                    letterSpacing: "0.04em", textTransform: "uppercase",
+                  }}
+                >
+                  Open Settings
+                </button>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "#c9d1d9", marginBottom: 4 }}>Open at Login</div>
+                <div style={{ fontSize: 12, color: "#8b919d" }}>
+                  {launchAtStartup ? "Enabled" : "Disabled"}
+                </div>
+              </div>
+              <button
+                onClick={handleToggleStartup}
+                disabled={startupBusy || launchAtStartup == null}
+                style={{
+                  background: launchAtStartup ? "#27a640" : "#58a6ff", color: "#001c38", border: "none",
+                  borderRadius: 4, padding: "8px 12px", fontWeight: 700, fontSize: 12,
+                  cursor: startupBusy ? "not-allowed" : "pointer", letterSpacing: "0.04em",
+                  textTransform: "uppercase", opacity: startupBusy ? 0.7 : 1,
+                }}
+              >
+                {startupBusy ? "Saving..." : launchAtStartup ? "Disable" : "Enable"}
+              </button>
+            </div>
+
+            {systemStatus && (
+              <div style={{ fontSize: 12, color: "#8b919d" }}>
+                {systemStatus}
+              </div>
+            )}
+          </div>
+        </div>
 
         {/* ── Invoice Defaults ───────────────────────────────────────────── */}
         <div style={{ marginTop: 40, maxWidth: 560 }}>

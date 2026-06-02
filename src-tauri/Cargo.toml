@@ -1,6 +1,6 @@
 [package]
 name = "FlowTracker"
-version = "0.1.9"
+version = "0.1.10"
 description = "Flow Tracker — Privacy-first automatic time tracking"
 authors = ["Carmelo Di Venti <carmelodiventi@gmail.com>"]
 edition = "2021"
@@ -25,6 +25,7 @@ log            = "0.4"
 env_logger     = "0.11"
 tauri-plugin-dialog = "2.0.0-rc.8"
 tauri-plugin-fs = "2.0.0-rc.6"
+tauri-plugin-autostart = "2"
 mongodb = "3.2.5"
 rusqlite = { version = "0.32", features = ["bundled"] }
 dirs-next = "2"

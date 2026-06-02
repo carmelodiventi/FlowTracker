@@ -65,7 +65,7 @@ export default function AccessibilityModal({ onDismiss }: Props) {
               lineHeight: 1.4,
             }}
           >
-            Flow Tracker needs accessibility to work properly
+            Flow Tracker needs Screen Recording to track window titles on macOS
           </h1>
 
           <div style={{ display: "flex", flexDirection: "column", width: "100%", gap: 12 }}>
