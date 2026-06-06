@@ -175,13 +175,6 @@ export const importBackupJson = (backup_json: string): Promise<BackupImportSumma
 export const clearUserData = (): Promise<void> =>
   invoke("clear_user_data");
 
-// ---------------------------------------------------------------------------
-// Screen Recording
-// ---------------------------------------------------------------------------
-
-export const checkAccessibility = (): Promise<boolean> =>
-  invoke("check_accessibility");
-
 export const openAccessibilitySettings = (): Promise<void> =>
   invoke("open_accessibility_settings");
 

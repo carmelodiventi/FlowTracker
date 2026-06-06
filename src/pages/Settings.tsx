@@ -443,18 +443,50 @@ export default function Settings() {
                   {launchAtStartup ? "Enabled" : "Disabled"}
                 </div>
               </div>
-              <button
-                onClick={handleToggleStartup}
-                disabled={startupBusy || launchAtStartup == null}
+              <div
                 style={{
-                  background: launchAtStartup ? "#27a640" : "#58a6ff", color: "#001c38", border: "none",
-                  borderRadius: 4, padding: "8px 12px", fontWeight: 700, fontSize: 12,
-                  cursor: startupBusy ? "not-allowed" : "pointer", letterSpacing: "0.04em",
-                  textTransform: "uppercase", opacity: startupBusy ? 0.7 : 1,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  color: startupBusy ? "#8b919d" : "#dfe2eb",
+                  opacity: startupBusy ? 0.7 : 1,
                 }}
               >
-                {startupBusy ? "Saving..." : launchAtStartup ? "Disable" : "Enable"}
-              </button>
+                <button
+                  type="button"
+                  onClick={handleToggleStartup}
+                  disabled={startupBusy || launchAtStartup == null}
+                  aria-label={launchAtStartup ? "Disable open at login" : "Enable open at login"}
+                  aria-pressed={Boolean(launchAtStartup)}
+                  style={{
+                    width: 44,
+                    height: 24,
+                    borderRadius: 12,
+                    border: "none",
+                    background: launchAtStartup ? "#58a6ff" : "#31353c",
+                    cursor: startupBusy || launchAtStartup == null ? "not-allowed" : "pointer",
+                    position: "relative",
+                    flexShrink: 0,
+                    transition: "background 0.2s",
+                  }}
+                >
+                  <span
+                    style={{
+                      position: "absolute",
+                      top: 3,
+                      left: launchAtStartup ? 22 : 3,
+                      width: 18,
+                      height: 18,
+                      borderRadius: "50%",
+                      background: launchAtStartup ? "#001c38" : "#8b919d",
+                      transition: "left 0.2s, background 0.2s",
+                    }}
+                  />
+                </button>
+                <span style={{ fontSize: 13 }}>
+                  {startupBusy ? "Saving..." : launchAtStartup ? "On" : "Off"}
+                </span>
+              </div>
             </div>
 
             {systemStatus && (

@@ -640,22 +640,6 @@ pub async fn clear_user_data(
     Ok(())
 }
 
-// ── Screen Recording ───────────────────────────────────────────────────────────
-
-#[tauri::command]
-pub fn check_accessibility() -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        #[link(name = "ApplicationServices", kind = "framework")]
-        extern "C" {
-            fn CGPreflightScreenCaptureAccess() -> bool;
-            fn AXIsProcessTrusted() -> bool;
-        }
-        unsafe { CGPreflightScreenCaptureAccess() || AXIsProcessTrusted() }
-    }
-    #[cfg(not(target_os = "macos"))] { true }
-}
-
 #[tauri::command]
 pub fn open_accessibility_settings() {
     #[cfg(target_os = "macos")]

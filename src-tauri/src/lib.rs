@@ -197,8 +197,7 @@ pub fn run() {
             export_backup_json,
             import_backup_json,
             clear_user_data,
-            // Accessibility
-            check_accessibility,
+            // Screen Recording
             open_accessibility_settings,
             get_launch_on_startup,
             set_launch_on_startup,
