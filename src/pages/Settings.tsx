@@ -131,7 +131,7 @@ export default function Settings() {
       getSetting("ai_api_key").catch(() => ""),
       getSetting("ai_ollama_model").catch(() => "llama3.2"),
       getSetting("ai_ollama_base_url").catch(() => "http://localhost:11434"),
-      getSetting("ai_lmstudio_model").catch(() => "llama3.2"),
+      getSetting("ai_lmstudio_model").catch(() => "ibm/granite-3.1-8b"),
       getSetting("ai_lmstudio_base_url").catch(() => "http://localhost:1234"),
     ]).then(
       ([
@@ -146,7 +146,7 @@ export default function Settings() {
         setAiApiKey(key || "");
         setAiOllamaModel(ollamaModel || "llama3.2");
         setAiOllamaBaseUrl(ollamaBaseUrl || "http://localhost:11434");
-        setAiLmStudioModel(lmstudioModel || "llama3.2");
+        setAiLmStudioModel(lmstudioModel || "ibm/granite-3.1-8b");
         setAiLmStudioBaseUrl(lmstudioBaseUrl || "http://localhost:1234");
       },
     );
@@ -1254,7 +1254,7 @@ export default function Settings() {
                   <div style={{ fontSize: 11, color: "#8b949e" }}>
                     {activeLocalProvider === "ollama"
                       ? "Ollama endpoint, for example http://localhost:11434"
-                      : "LM Studio endpoint, for example http://localhost:1234"}
+                      : "LM Studio endpoint, for example http://localhost:1234 - Enable CORS in Server Settings "}
                   </div>
                 </div>
                 {localModels.length > 0 ? (
