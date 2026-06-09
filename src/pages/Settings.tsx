@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { writeFile, readFile } from "@tauri-apps/plugin-fs";
+import { info } from "@tauri-apps/plugin-log";
 import i18n from "../i18n";
 import {
   getSetting,
@@ -15,8 +16,8 @@ import {
 } from "../api";
 import {
   type AIProvider,
-  isOllamaAvailable,
-  listOllamaModels,
+  isLocalLLMAvailable,
+  listLocalModels,
 } from "../lib/ai";
 
 interface SettingField {
@@ -84,8 +85,15 @@ export default function Settings() {
   const [aiProvider, setAiProvider] = useState<AIProvider>("none");
   const [aiApiKey, setAiApiKey] = useState("");
   const [aiOllamaModel, setAiOllamaModel] = useState("llama3.2");
-  const [ollamaAvailable, setOllamaAvailable] = useState<boolean | null>(null);
-  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [aiOllamaBaseUrl, setAiOllamaBaseUrl] = useState(
+    "http://localhost:11434",
+  );
+  const [aiLmStudioModel, setAiLmStudioModel] = useState("llama3.2");
+  const [aiLmStudioBaseUrl, setAiLmStudioBaseUrl] = useState(
+    "http://localhost:1234",
+  );
+  const [localAvailable, setLocalAvailable] = useState<boolean | null>(null);
+  const [localModels, setLocalModels] = useState<string[]>([]);
   const [aiSaved, setAiSaved] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
   const [invoiceDefaultsEnabled, setInvoiceDefaultsEnabled] = useState(false);
@@ -101,27 +109,47 @@ export default function Settings() {
   const [systemStatus, setSystemStatus] = useState<string | null>(null);
 
   // Language picker state — read the currently active language
-  const [currentLang, setCurrentLang] = useState(i18n.language?.slice(0, 2) ?? "en");
+  const [currentLang, setCurrentLang] = useState(
+    i18n.language?.slice(0, 2) ?? "en",
+  );
 
   useEffect(() => {
-    Promise.all(FIELDS.map((f) => getSetting(f.key).then((v) => [f.key, v || f.default || ""] as [string, string]).catch(() => [f.key, f.default ?? ""] as [string, string])))
-      .then((entries) => {
-        setValues(Object.fromEntries(entries));
-        setLoading(false);
-      });
-
-      
+    Promise.all(
+      FIELDS.map((f) =>
+        getSetting(f.key)
+          .then((v) => [f.key, v || f.default || ""] as [string, string])
+          .catch(() => [f.key, f.default ?? ""] as [string, string]),
+      ),
+    ).then((entries) => {
+      setValues(Object.fromEntries(entries));
+      setLoading(false);
+    });
 
     // Load AI settings
     Promise.all([
       getSetting("ai_provider").catch(() => "none"),
       getSetting("ai_api_key").catch(() => ""),
       getSetting("ai_ollama_model").catch(() => "llama3.2"),
-    ]).then(([prov, key, model]) => {
-      setAiProvider((prov as AIProvider) || "none");
-      setAiApiKey(key || "");
-      setAiOllamaModel(model || "llama3.2");
-    });
+      getSetting("ai_ollama_base_url").catch(() => "http://localhost:11434"),
+      getSetting("ai_lmstudio_model").catch(() => "llama3.2"),
+      getSetting("ai_lmstudio_base_url").catch(() => "http://localhost:1234"),
+    ]).then(
+      ([
+        prov,
+        key,
+        ollamaModel,
+        ollamaBaseUrl,
+        lmstudioModel,
+        lmstudioBaseUrl,
+      ]) => {
+        setAiProvider((prov as AIProvider) || "none");
+        setAiApiKey(key || "");
+        setAiOllamaModel(ollamaModel || "llama3.2");
+        setAiOllamaBaseUrl(ollamaBaseUrl || "http://localhost:11434");
+        setAiLmStudioModel(lmstudioModel || "llama3.2");
+        setAiLmStudioBaseUrl(lmstudioBaseUrl || "http://localhost:1234");
+      },
+    );
 
     Promise.all([
       getSetting("invoice_meta_enabled").catch(() => "false"),
@@ -145,23 +173,36 @@ export default function Settings() {
       });
   }, []);
 
-  // Check Ollama when provider switches to ollama
+  // Check local LLM availability when the active provider is local.
   useEffect(() => {
-    if (aiProvider === "ollama") {
-      isOllamaAvailable().then((ok) => {
-        setOllamaAvailable(ok);
-        if (ok) listOllamaModels().then(setOllamaModels);
+    if (aiProvider === "ollama" || aiProvider === "lmstudio") {
+      const baseUrl =
+        aiProvider === "ollama" ? aiOllamaBaseUrl : aiLmStudioBaseUrl;
+      isLocalLLMAvailable(aiProvider, baseUrl).then((res) => {
+        setLocalAvailable(res);
+        if (res) {
+          listLocalModels(aiProvider, baseUrl)
+            .then(setLocalModels)
+            .catch(() => setLocalModels([]));
+        } else {
+          setLocalModels([]);
+        }
       });
     } else {
-      setOllamaAvailable(null);
+      info("isLocalLLMAvailable=false");
+      setLocalAvailable(null);
+      setLocalModels([]);
     }
-  }, [aiProvider]);
+  }, [aiProvider, aiOllamaBaseUrl, aiLmStudioBaseUrl]);
 
   const handleSaveAI = async () => {
     await Promise.all([
       setSetting("ai_provider", aiProvider),
       setSetting("ai_api_key", aiApiKey),
       setSetting("ai_ollama_model", aiOllamaModel),
+      setSetting("ai_ollama_base_url", aiOllamaBaseUrl),
+      setSetting("ai_lmstudio_model", aiLmStudioModel),
+      setSetting("ai_lmstudio_base_url", aiLmStudioBaseUrl),
     ]).catch(console.error);
     setAiSaved(true);
     setTimeout(() => setAiSaved(false), 1500);
@@ -175,7 +216,10 @@ export default function Settings() {
 
   const handleSaveInvoiceDefaults = async () => {
     await Promise.all([
-      setSetting("invoice_meta_enabled", invoiceDefaultsEnabled ? "true" : "false"),
+      setSetting(
+        "invoice_meta_enabled",
+        invoiceDefaultsEnabled ? "true" : "false",
+      ),
       setSetting("bank_details_default", defaultBankDetails),
       setSetting("hourly_rate_default", defaultHourlyRate),
       setSetting("vat_rate_default", defaultVatRate),
@@ -227,7 +271,7 @@ export default function Settings() {
       const backupJson = new TextDecoder().decode(raw);
       const summary = await importBackupJson(backupJson);
       setBackupStatus(
-        `Backup imported: ${summary.sessions} sessions, ${summary.work_sessions} work sessions, ${summary.projects} projects, ${summary.clients} clients.`
+        `Backup imported: ${summary.sessions} sessions, ${summary.work_sessions} work sessions, ${summary.projects} projects, ${summary.clients} clients.`,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -239,7 +283,7 @@ export default function Settings() {
 
   const handleClearDatabase = async () => {
     const confirmed = window.confirm(
-      "Are you sure you want to clear all local data? This will delete all sessions, projects, clients, applications, and settings. This action cannot be undone."
+      "Are you sure you want to clear all local data? This will delete all sessions, projects, clients, applications, and settings. This action cannot be undone.",
     );
     if (!confirmed) return;
 
@@ -259,7 +303,9 @@ export default function Settings() {
 
   const handleOpenAccessibility = async () => {
     await openAccessibilitySettings().catch(console.error);
-    setSystemStatus("System Settings opened. Enable Screen Recording, then fully quit and reopen Flow Tracker.");
+    setSystemStatus(
+      "System Settings opened. Enable Screen Recording, then fully quit and reopen Flow Tracker.",
+    );
   };
 
   const handleToggleStartup = async () => {
@@ -270,7 +316,11 @@ export default function Settings() {
       setStartupBusy(true);
       await setLaunchOnStartup(next);
       setLaunchAtStartup(next);
-      setSystemStatus(next ? "Flow Tracker will open at login." : "Flow Tracker will no longer open at login.");
+      setSystemStatus(
+        next
+          ? "Flow Tracker will open at login."
+          : "Flow Tracker will no longer open at login.",
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setSystemStatus(`Could not update startup setting: ${message}`);
@@ -279,23 +329,53 @@ export default function Settings() {
     }
   };
 
+  const activeLocalProvider =
+    aiProvider === "ollama" || aiProvider === "lmstudio" ? aiProvider : null;
+  const activeLocalModel =
+    activeLocalProvider === "ollama" ? aiOllamaModel : aiLmStudioModel;
+  const activeLocalBaseUrl =
+    activeLocalProvider === "ollama" ? aiOllamaBaseUrl : aiLmStudioBaseUrl;
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
+    <div
+      style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}
+    >
       {/* Top bar */}
       <header
         style={{
-          display: "flex", alignItems: "center",
-          padding: "0 32px", height: 56, flexShrink: 0,
-          borderBottom: "1px solid rgba(65,71,82,0.2)", background: "#10141a",
+          display: "flex",
+          alignItems: "center",
+          padding: "0 32px",
+          height: 56,
+          flexShrink: 0,
+          borderBottom: "1px solid rgba(65,71,82,0.2)",
+          background: "#10141a",
         }}
       >
-        <span style={{ fontFamily: "Roboto Mono, monospace", fontSize: 13, color: "#a2c9ff", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+        <span
+          style={{
+            fontFamily: "Roboto Mono, monospace",
+            fontSize: 13,
+            color: "#a2c9ff",
+            fontWeight: 700,
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+          }}
+        >
           {t("settings.headerTitle")}
         </span>
       </header>
 
       <div className="flex-1 overflow-y-auto" style={{ padding: "32px" }}>
-        <h1 style={{ fontSize: 28, fontWeight: 800, color: "#f0f6fc", letterSpacing: "-0.04em", margin: "0 0 6px" }}>
+        <h1
+          style={{
+            fontSize: 28,
+            fontWeight: 800,
+            color: "#f0f6fc",
+            letterSpacing: "-0.04em",
+            margin: "0 0 6px",
+          }}
+        >
           {t("settings.title")}
         </h1>
         <p style={{ fontSize: 14, color: "#8b919d", marginBottom: 32 }}>
@@ -304,10 +384,28 @@ export default function Settings() {
 
         {/* ── Language picker ─────────────────────────────────────────────── */}
         <div style={{ marginBottom: 32, maxWidth: 560 }}>
-          <div style={{ background: "#181c22", border: "1px solid rgba(65,71,82,0.3)", borderRadius: 6, padding: "20px 24px" }}>
+          <div
+            style={{
+              background: "#181c22",
+              border: "1px solid rgba(65,71,82,0.3)",
+              borderRadius: 6,
+              padding: "20px 24px",
+            }}
+          >
             <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 15, fontWeight: 600, color: "#f0f6fc", marginBottom: 4 }}>{t("settings.languageLabel")}</div>
-              <div style={{ fontSize: 12, color: "#8b919d" }}>{t("settings.languageDesc")}</div>
+              <div
+                style={{
+                  fontSize: 15,
+                  fontWeight: 600,
+                  color: "#f0f6fc",
+                  marginBottom: 4,
+                }}
+              >
+                {t("settings.languageLabel")}
+              </div>
+              <div style={{ fontSize: 12, color: "#8b919d" }}>
+                {t("settings.languageDesc")}
+              </div>
             </div>
             <select
               value={currentLang}
@@ -317,8 +415,13 @@ export default function Settings() {
                 i18n.changeLanguage(code);
               }}
               style={{
-                background: "#10141a", border: "1px solid #414752", borderRadius: 4,
-                padding: "8px 12px", color: "#dfe2eb", fontSize: 13, outline: "none",
+                background: "#10141a",
+                border: "1px solid #414752",
+                borderRadius: 4,
+                padding: "8px 12px",
+                color: "#dfe2eb",
+                fontSize: 13,
+                outline: "none",
                 width: "100%",
               }}
             >
@@ -337,32 +440,64 @@ export default function Settings() {
         {loading ? (
           <div style={{ color: "#8b919d" }}>{t("settings.loading")}</div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 560 }}>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 16,
+              maxWidth: 560,
+            }}
+          >
             {FIELDS.map((field) => (
               <div
                 key={field.key}
                 style={{
-                  background: "#181c22", border: "1px solid rgba(65,71,82,0.3)",
-                  borderRadius: 6, padding: "20px 24px",
+                  background: "#181c22",
+                  border: "1px solid rgba(65,71,82,0.3)",
+                  borderRadius: 6,
+                  padding: "20px 24px",
                 }}
               >
                 <div style={{ marginBottom: 12 }}>
-                  <div style={{ fontSize: 15, fontWeight: 600, color: "#f0f6fc", marginBottom: 4 }}>{t(field.labelKey)}</div>
-                  <div style={{ fontSize: 12, color: "#8b919d" }}>{t(field.descKey)}</div>
+                  <div
+                    style={{
+                      fontSize: 15,
+                      fontWeight: 600,
+                      color: "#f0f6fc",
+                      marginBottom: 4,
+                    }}
+                  >
+                    {t(field.labelKey)}
+                  </div>
+                  <div style={{ fontSize: 12, color: "#8b919d" }}>
+                    {t(field.descKey)}
+                  </div>
                 </div>
                 <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                   {field.type === "select" ? (
                     <select
                       value={values[field.key] ?? ""}
-                      onChange={(e) => setValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
+                      onChange={(e) =>
+                        setValues((prev) => ({
+                          ...prev,
+                          [field.key]: e.target.value,
+                        }))
+                      }
                       style={{
-                        flex: 1, background: "#10141a", border: "1px solid #414752",
-                        borderRadius: 4, padding: "8px 12px", color: "#dfe2eb",
-                        fontSize: 13, outline: "none",
+                        flex: 1,
+                        background: "#10141a",
+                        border: "1px solid #414752",
+                        borderRadius: 4,
+                        padding: "8px 12px",
+                        color: "#dfe2eb",
+                        fontSize: 13,
+                        outline: "none",
                       }}
                     >
                       {field.options?.map((opt) => (
-                        <option key={opt.value} value={opt.value}>{t(opt.labelKey)}</option>
+                        <option key={opt.value} value={opt.value}>
+                          {t(opt.labelKey)}
+                        </option>
                       ))}
                     </select>
                   ) : (
@@ -372,15 +507,28 @@ export default function Settings() {
                         min={field.min}
                         max={field.max}
                         value={values[field.key] ?? ""}
-                        onChange={(e) => setValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
+                        onChange={(e) =>
+                          setValues((prev) => ({
+                            ...prev,
+                            [field.key]: e.target.value,
+                          }))
+                        }
                         style={{
-                          width: 100, background: "#10141a", border: "1px solid #414752",
-                          borderRadius: 4, padding: "8px 12px", color: "#dfe2eb",
-                          fontSize: 13, outline: "none", fontFamily: "Roboto Mono, monospace",
+                          width: 100,
+                          background: "#10141a",
+                          border: "1px solid #414752",
+                          borderRadius: 4,
+                          padding: "8px 12px",
+                          color: "#dfe2eb",
+                          fontSize: 13,
+                          outline: "none",
+                          fontFamily: "Roboto Mono, monospace",
                         }}
                       />
                       {field.unit && (
-                        <span style={{ fontSize: 12, color: "#8b919d" }}>{t(field.unit)}</span>
+                        <span style={{ fontSize: 12, color: "#8b919d" }}>
+                          {t(field.unit)}
+                        </span>
                       )}
                     </>
                   )}
@@ -388,14 +536,22 @@ export default function Settings() {
                     onClick={() => handleSave(field.key)}
                     style={{
                       background: saved[field.key] ? "#27a640" : "#58a6ff",
-                      color: "#001c38", border: "none",
-                      borderRadius: 4, padding: "8px 16px", fontWeight: 700,
-                      fontSize: 11, cursor: "pointer", letterSpacing: "0.05em",
-                      textTransform: "uppercase", transition: "background 0.2s",
+                      color: "#001c38",
+                      border: "none",
+                      borderRadius: 4,
+                      padding: "8px 16px",
+                      fontWeight: 700,
+                      fontSize: 11,
+                      cursor: "pointer",
+                      letterSpacing: "0.05em",
+                      textTransform: "uppercase",
+                      transition: "background 0.2s",
                       whiteSpace: "nowrap",
                     }}
                   >
-                    {saved[field.key] ? t("settings.saved") : t("settings.save")}
+                    {saved[field.key]
+                      ? t("settings.saved")
+                      : t("settings.save")}
                   </button>
                 </div>
               </div>
@@ -406,29 +562,72 @@ export default function Settings() {
         {/* ── Invoice Defaults ───────────────────────────────────────────── */}
         <div style={{ marginTop: 40, maxWidth: 560 }}>
           <div style={{ marginBottom: 16 }}>
-            <h2 style={{ fontSize: 18, fontWeight: 700, color: "#f0f6fc", margin: "0 0 4px" }}>
+            <h2
+              style={{
+                fontSize: 18,
+                fontWeight: 700,
+                color: "#f0f6fc",
+                margin: "0 0 4px",
+              }}
+            >
               System Permissions
             </h2>
             <p style={{ fontSize: 13, color: "#8b919d", margin: 0 }}>
-              Manage macOS Screen Recording access and control whether the app launches at login.
+              Manage macOS Screen Recording access and control whether the app
+              launches at login.
             </p>
           </div>
 
-          <div style={{ background: "#181c22", border: "1px solid rgba(65,71,82,0.3)", borderRadius: 6, padding: "20px 24px", display: "flex", flexDirection: "column", gap: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div
+            style={{
+              background: "#181c22",
+              border: "1px solid rgba(65,71,82,0.3)",
+              borderRadius: 6,
+              padding: "20px 24px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+                flexWrap: "wrap",
+              }}
+            >
               <div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "#c9d1d9", marginBottom: 4 }}>Screen Recording</div>
+                <div
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: "#c9d1d9",
+                    marginBottom: 4,
+                  }}
+                >
+                  Screen Recording
+                </div>
                 <div style={{ fontSize: 12, color: "#8b919d", maxWidth: 340 }}>
-                  Open System Settings to grant permission. macOS may not apply changes until the app is fully restarted.
+                  Open System Settings to grant permission. macOS may not apply
+                  changes until the app is fully restarted.
                 </div>
               </div>
               <div style={{ display: "flex", gap: 8 }}>
                 <button
                   onClick={handleOpenAccessibility}
                   style={{
-                    background: "#58a6ff", color: "#001c38", border: "none", borderRadius: 4,
-                    padding: "8px 12px", fontWeight: 700, fontSize: 12, cursor: "pointer",
-                    letterSpacing: "0.04em", textTransform: "uppercase",
+                    background: "#58a6ff",
+                    color: "#001c38",
+                    border: "none",
+                    borderRadius: 4,
+                    padding: "8px 12px",
+                    fontWeight: 700,
+                    fontSize: 12,
+                    cursor: "pointer",
+                    letterSpacing: "0.04em",
+                    textTransform: "uppercase",
                   }}
                 >
                   Open Settings
@@ -436,9 +635,26 @@ export default function Settings() {
               </div>
             </div>
 
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+                flexWrap: "wrap",
+              }}
+            >
               <div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "#c9d1d9", marginBottom: 4 }}>Open at Login</div>
+                <div
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: "#c9d1d9",
+                    marginBottom: 4,
+                  }}
+                >
+                  Open at Login
+                </div>
                 <div style={{ fontSize: 12, color: "#8b919d" }}>
                   {launchAtStartup ? "Enabled" : "Disabled"}
                 </div>
@@ -456,7 +672,11 @@ export default function Settings() {
                   type="button"
                   onClick={handleToggleStartup}
                   disabled={startupBusy || launchAtStartup == null}
-                  aria-label={launchAtStartup ? "Disable open at login" : "Enable open at login"}
+                  aria-label={
+                    launchAtStartup
+                      ? "Disable open at login"
+                      : "Enable open at login"
+                  }
                   aria-pressed={Boolean(launchAtStartup)}
                   style={{
                     width: 44,
@@ -464,7 +684,10 @@ export default function Settings() {
                     borderRadius: 12,
                     border: "none",
                     background: launchAtStartup ? "#58a6ff" : "#31353c",
-                    cursor: startupBusy || launchAtStartup == null ? "not-allowed" : "pointer",
+                    cursor:
+                      startupBusy || launchAtStartup == null
+                        ? "not-allowed"
+                        : "pointer",
                     position: "relative",
                     flexShrink: 0,
                     transition: "background 0.2s",
@@ -500,7 +723,14 @@ export default function Settings() {
         {/* ── Invoice Defaults ───────────────────────────────────────────── */}
         <div style={{ marginTop: 40, maxWidth: 560 }}>
           <div style={{ marginBottom: 16 }}>
-            <h2 style={{ fontSize: 18, fontWeight: 700, color: "#f0f6fc", margin: "0 0 4px" }}>
+            <h2
+              style={{
+                fontSize: 18,
+                fontWeight: 700,
+                color: "#f0f6fc",
+                margin: "0 0 4px",
+              }}
+            >
               Invoice Defaults
             </h2>
             <p style={{ fontSize: 13, color: "#8b919d", margin: 0 }}>
@@ -508,8 +738,26 @@ export default function Settings() {
             </p>
           </div>
 
-          <div style={{ background: "#181c22", border: "1px solid rgba(65,71,82,0.3)", borderRadius: 6, padding: "20px 24px", display: "flex", flexDirection: "column", gap: 14 }}>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, color: "#c9d1d9" }}>
+          <div
+            style={{
+              background: "#181c22",
+              border: "1px solid rgba(65,71,82,0.3)",
+              borderRadius: 6,
+              padding: "20px 24px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 14,
+            }}
+          >
+            <label
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                fontSize: 13,
+                color: "#c9d1d9",
+              }}
+            >
               <input
                 type="checkbox"
                 checked={invoiceDefaultsEnabled}
@@ -520,54 +768,122 @@ export default function Settings() {
             </label>
 
             <div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#c9d1d9", marginBottom: 6 }}>Default Bank Details</div>
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: "#c9d1d9",
+                  marginBottom: 6,
+                }}
+              >
+                Default Bank Details
+              </div>
               <textarea
                 value={defaultBankDetails}
                 onChange={(e) => setDefaultBankDetails(e.target.value)}
                 placeholder="Beneficiary, IBAN, SWIFT/BIC, bank name"
                 rows={4}
                 style={{
-                  width: "100%", boxSizing: "border-box", background: "#10141a", border: "1px solid #414752",
-                  borderRadius: 4, padding: "8px 12px", color: "#dfe2eb", fontSize: 13, outline: "none", resize: "vertical",
-                  fontFamily: "Roboto Mono, monospace", marginBottom: 12,
+                  width: "100%",
+                  boxSizing: "border-box",
+                  background: "#10141a",
+                  border: "1px solid #414752",
+                  borderRadius: 4,
+                  padding: "8px 12px",
+                  color: "#dfe2eb",
+                  fontSize: 13,
+                  outline: "none",
+                  resize: "vertical",
+                  fontFamily: "Roboto Mono, monospace",
+                  marginBottom: 12,
                 }}
               />
 
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#c9d1d9", marginBottom: 6 }}>Default Hourly Rate (optional)</div>
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: "#c9d1d9",
+                  marginBottom: 6,
+                }}
+              >
+                Default Hourly Rate (optional)
+              </div>
               <input
                 type="text"
                 value={defaultHourlyRate}
                 onChange={(e) => setDefaultHourlyRate(e.target.value)}
                 placeholder="e.g., $50/hr or €45/h"
                 style={{
-                  width: "100%", boxSizing: "border-box", background: "#10141a", border: "1px solid #414752",
-                  borderRadius: 4, padding: "8px 12px", color: "#dfe2eb", fontSize: 13, outline: "none",
-                  fontFamily: "Roboto Mono, monospace", marginBottom: 12,
+                  width: "100%",
+                  boxSizing: "border-box",
+                  background: "#10141a",
+                  border: "1px solid #414752",
+                  borderRadius: 4,
+                  padding: "8px 12px",
+                  color: "#dfe2eb",
+                  fontSize: 13,
+                  outline: "none",
+                  fontFamily: "Roboto Mono, monospace",
+                  marginBottom: 12,
                 }}
               />
 
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#c9d1d9", marginBottom: 6 }}>Default VAT Rate (optional)</div>
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: "#c9d1d9",
+                  marginBottom: 6,
+                }}
+              >
+                Default VAT Rate (optional)
+              </div>
               <input
                 type="text"
                 value={defaultVatRate}
                 onChange={(e) => setDefaultVatRate(e.target.value)}
                 placeholder="e.g., 20% or 19%"
                 style={{
-                  width: "100%", boxSizing: "border-box", background: "#10141a", border: "1px solid #414752",
-                  borderRadius: 4, padding: "8px 12px", color: "#dfe2eb", fontSize: 13, outline: "none",
-                  fontFamily: "Roboto Mono, monospace", marginBottom: 12,
+                  width: "100%",
+                  boxSizing: "border-box",
+                  background: "#10141a",
+                  border: "1px solid #414752",
+                  borderRadius: 4,
+                  padding: "8px 12px",
+                  color: "#dfe2eb",
+                  fontSize: 13,
+                  outline: "none",
+                  fontFamily: "Roboto Mono, monospace",
+                  marginBottom: 12,
                 }}
               />
 
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#c9d1d9", marginBottom: 6 }}>Default Currency (optional)</div>
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: "#c9d1d9",
+                  marginBottom: 6,
+                }}
+              >
+                Default Currency (optional)
+              </div>
               <input
                 type="text"
                 value={defaultCurrency}
                 onChange={(e) => setDefaultCurrency(e.target.value)}
                 placeholder="e.g., EUR, USD, GBP"
                 style={{
-                  width: "100%", boxSizing: "border-box", background: "#10141a", border: "1px solid #414752",
-                  borderRadius: 4, padding: "8px 12px", color: "#dfe2eb", fontSize: 13, outline: "none",
+                  width: "100%",
+                  boxSizing: "border-box",
+                  background: "#10141a",
+                  border: "1px solid #414752",
+                  borderRadius: 4,
+                  padding: "8px 12px",
+                  color: "#dfe2eb",
+                  fontSize: 13,
+                  outline: "none",
                   fontFamily: "Roboto Mono, monospace",
                 }}
               />
@@ -577,9 +893,17 @@ export default function Settings() {
               <button
                 onClick={handleSaveInvoiceDefaults}
                 style={{
-                  background: invoiceSaved ? "#27a640" : "#58a6ff", color: "#001c38", border: "none",
-                  borderRadius: 4, padding: "9px 20px", fontWeight: 700, fontSize: 12, cursor: "pointer",
-                  letterSpacing: "0.05em", textTransform: "uppercase", transition: "background 0.2s",
+                  background: invoiceSaved ? "#27a640" : "#58a6ff",
+                  color: "#001c38",
+                  border: "none",
+                  borderRadius: 4,
+                  padding: "9px 20px",
+                  fontWeight: 700,
+                  fontSize: 12,
+                  cursor: "pointer",
+                  letterSpacing: "0.05em",
+                  textTransform: "uppercase",
+                  transition: "background 0.2s",
                 }}
               >
                 {invoiceSaved ? t("settings.saved") : t("settings.save")}
@@ -591,24 +915,49 @@ export default function Settings() {
         {/* ── AI Integration ─────────────────────────────────────────────── */}
         <div style={{ marginTop: 40, maxWidth: 560 }}>
           <div style={{ marginBottom: 16 }}>
-            <h2 style={{ fontSize: 18, fontWeight: 700, color: "#f0f6fc", margin: "0 0 4px" }}>
+            <h2
+              style={{
+                fontSize: 18,
+                fontWeight: 700,
+                color: "#f0f6fc",
+                margin: "0 0 4px",
+              }}
+            >
               Data Backup
             </h2>
             <p style={{ fontSize: 13, color: "#8b919d", margin: 0 }}>
-              Export your full local data to a JSON file, then import it on another computer.
+              Export your full local data to a JSON file, then import it on
+              another computer.
             </p>
           </div>
 
-          <div style={{ background: "#181c22", border: "1px solid rgba(65,71,82,0.3)", borderRadius: 6, padding: "20px 24px", display: "flex", flexDirection: "column", gap: 12 }}>
+          <div
+            style={{
+              background: "#181c22",
+              border: "1px solid rgba(65,71,82,0.3)",
+              borderRadius: 6,
+              padding: "20px 24px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+            }}
+          >
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
               <button
                 onClick={handleExportBackup}
                 disabled={backupBusy}
                 style={{
-                  background: "#58a6ff", color: "#001c38", border: "none",
-                  borderRadius: 4, padding: "9px 16px", fontWeight: 700, fontSize: 12,
-                  cursor: backupBusy ? "not-allowed" : "pointer", letterSpacing: "0.05em",
-                  textTransform: "uppercase", opacity: backupBusy ? 0.7 : 1,
+                  background: "#58a6ff",
+                  color: "#001c38",
+                  border: "none",
+                  borderRadius: 4,
+                  padding: "9px 16px",
+                  fontWeight: 700,
+                  fontSize: 12,
+                  cursor: backupBusy ? "not-allowed" : "pointer",
+                  letterSpacing: "0.05em",
+                  textTransform: "uppercase",
+                  opacity: backupBusy ? 0.7 : 1,
                 }}
               >
                 Export Backup
@@ -617,10 +966,17 @@ export default function Settings() {
                 onClick={handleImportBackup}
                 disabled={backupBusy}
                 style={{
-                  background: "#3fb950", color: "#07290f", border: "none",
-                  borderRadius: 4, padding: "9px 16px", fontWeight: 700, fontSize: 12,
-                  cursor: backupBusy ? "not-allowed" : "pointer", letterSpacing: "0.05em",
-                  textTransform: "uppercase", opacity: backupBusy ? 0.7 : 1,
+                  background: "#3fb950",
+                  color: "#07290f",
+                  border: "none",
+                  borderRadius: 4,
+                  padding: "9px 16px",
+                  fontWeight: 700,
+                  fontSize: 12,
+                  cursor: backupBusy ? "not-allowed" : "pointer",
+                  letterSpacing: "0.05em",
+                  textTransform: "uppercase",
+                  opacity: backupBusy ? 0.7 : 1,
                 }}
               >
                 Import Backup
@@ -629,10 +985,17 @@ export default function Settings() {
                 onClick={handleClearDatabase}
                 disabled={backupBusy}
                 style={{
-                  background: "#f85149", color: "#fff", border: "none",
-                  borderRadius: 4, padding: "9px 16px", fontWeight: 700, fontSize: 12,
-                  cursor: backupBusy ? "not-allowed" : "pointer", letterSpacing: "0.05em",
-                  textTransform: "uppercase", opacity: backupBusy ? 0.7 : 1,
+                  background: "#f85149",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 4,
+                  padding: "9px 16px",
+                  fontWeight: 700,
+                  fontSize: 12,
+                  cursor: backupBusy ? "not-allowed" : "pointer",
+                  letterSpacing: "0.05em",
+                  textTransform: "uppercase",
+                  opacity: backupBusy ? 0.7 : 1,
                 }}
               >
                 Clear Database
@@ -649,7 +1012,14 @@ export default function Settings() {
         {/* ── AI Integration ─────────────────────────────────────────────── */}
         <div style={{ marginTop: 40, maxWidth: 560 }}>
           <div style={{ marginBottom: 16 }}>
-            <h2 style={{ fontSize: 18, fontWeight: 700, color: "#f0f6fc", margin: "0 0 4px" }}>
+            <h2
+              style={{
+                fontSize: 18,
+                fontWeight: 700,
+                color: "#f0f6fc",
+                margin: "0 0 4px",
+              }}
+            >
               {t("settings.aiTitle")}
             </h2>
             <p style={{ fontSize: 13, color: "#8b919d", margin: 0 }}>
@@ -657,29 +1027,76 @@ export default function Settings() {
             </p>
           </div>
 
-          <div style={{ background: "#181c22", border: "1px solid rgba(65,71,82,0.3)", borderRadius: 6, padding: "20px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
-
+          <div
+            style={{
+              background: "#181c22",
+              border: "1px solid rgba(65,71,82,0.3)",
+              borderRadius: 6,
+              padding: "20px 24px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 16,
+            }}
+          >
             {/* Provider selector */}
             <div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#c9d1d9", marginBottom: 8 }}>{t("settings.provider")}</div>
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: "#c9d1d9",
+                  marginBottom: 8,
+                }}
+              >
+                {t("settings.provider")}
+              </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {(["none", "openai", "mistral", "google", "ollama"] as AIProvider[]).map((p) => {
+                {(
+                  [
+                    "none",
+                    "openai",
+                    "mistral",
+                    "google",
+                    "ollama",
+                    "lmstudio",
+                  ] as AIProvider[]
+                ).map((p) => {
                   const labels: Record<AIProvider, string> = {
                     none: t("settings.disabled"),
                     openai: "OpenAI",
                     mistral: "Mistral",
                     google: "Gemini",
                     ollama: "Ollama (local)",
+                    lmstudio: "LM Studio (local)",
                   };
                   return (
                     <button
                       key={p}
                       onClick={() => setAiProvider(p)}
                       style={{
-                        padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer",
-                        background: aiProvider === p ? (p === "none" ? "rgba(139,148,158,0.15)" : "rgba(88,166,255,0.15)") : "transparent",
-                        border: aiProvider === p ? (p === "none" ? "1px solid #8b949e" : "1px solid #58a6ff") : "1px solid rgba(255,255,255,0.08)",
-                        color: aiProvider === p ? (p === "none" ? "#8b949e" : "#58a6ff") : "#8b949e",
+                        padding: "6px 14px",
+                        borderRadius: 20,
+                        fontSize: 12,
+                        fontWeight: 600,
+                        cursor: "pointer",
+                        background:
+                          aiProvider === p
+                            ? p === "none"
+                              ? "rgba(139,148,158,0.15)"
+                              : "rgba(88,166,255,0.15)"
+                            : "transparent",
+                        border:
+                          aiProvider === p
+                            ? p === "none"
+                              ? "1px solid #8b949e"
+                              : "1px solid #58a6ff"
+                            : "1px solid rgba(255,255,255,0.08)",
+                        color:
+                          aiProvider === p
+                            ? p === "none"
+                              ? "#8b949e"
+                              : "#58a6ff"
+                            : "#8b949e",
                         transition: "all 0.15s",
                       }}
                     >
@@ -690,74 +1107,209 @@ export default function Settings() {
               </div>
             </div>
 
-            {/* API key (not needed for Ollama or none) */}
-            {aiProvider !== "none" && aiProvider !== "ollama" && (
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "#c9d1d9", marginBottom: 8 }}>
-                  {t("settings.apiKey")}
-                  {aiProvider === "openai" && <span style={{ color: "#8b949e", fontWeight: 400 }}> — openai.com</span>}
-                  {aiProvider === "mistral" && <span style={{ color: "#8b949e", fontWeight: 400 }}> — console.mistral.ai</span>}
-                  {aiProvider === "google" && <span style={{ color: "#8b949e", fontWeight: 400 }}> — aistudio.google.com</span>}
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <input
-                    type={showApiKey ? "text" : "password"}
-                    value={aiApiKey}
-                    onChange={(e) => setAiApiKey(e.target.value)}
-                    placeholder={t("settings.pasteApiKey")}
+            {/* API key (not needed for local providers or none) */}
+            {aiProvider !== "none" &&
+              aiProvider !== "ollama" &&
+              aiProvider !== "lmstudio" && (
+                <div>
+                  <div
                     style={{
-                      flex: 1, background: "#10141a", border: "1px solid #414752", borderRadius: 4,
-                      padding: "8px 12px", color: "#dfe2eb", fontSize: 13, outline: "none",
+                      fontSize: 13,
+                      fontWeight: 600,
+                      color: "#c9d1d9",
+                      marginBottom: 8,
+                    }}
+                  >
+                    {t("settings.apiKey")}
+                    {aiProvider === "openai" && (
+                      <span style={{ color: "#8b949e", fontWeight: 400 }}>
+                        {" "}
+                        — openai.com
+                      </span>
+                    )}
+                    {aiProvider === "mistral" && (
+                      <span style={{ color: "#8b949e", fontWeight: 400 }}>
+                        {" "}
+                        — console.mistral.ai
+                      </span>
+                    )}
+                    {aiProvider === "google" && (
+                      <span style={{ color: "#8b949e", fontWeight: 400 }}>
+                        {" "}
+                        — aistudio.google.com
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input
+                      type={showApiKey ? "text" : "password"}
+                      value={aiApiKey}
+                      onChange={(e) => setAiApiKey(e.target.value)}
+                      placeholder={t("settings.pasteApiKey")}
+                      style={{
+                        flex: 1,
+                        background: "#10141a",
+                        border: "1px solid #414752",
+                        borderRadius: 4,
+                        padding: "8px 12px",
+                        color: "#dfe2eb",
+                        fontSize: 13,
+                        outline: "none",
+                        fontFamily: "Roboto Mono, monospace",
+                      }}
+                    />
+                    <button
+                      onClick={() => setShowApiKey(!showApiKey)}
+                      style={{
+                        background: "transparent",
+                        border: "1px solid #414752",
+                        borderRadius: 4,
+                        padding: "8px 10px",
+                        color: "#8b949e",
+                        cursor: "pointer",
+                        fontSize: 13,
+                      }}
+                      title={
+                        showApiKey
+                          ? t("settings.hideKey")
+                          : t("settings.showKey")
+                      }
+                    >
+                      <span
+                        className="material-icons"
+                        style={{ fontSize: 16, verticalAlign: "middle" }}
+                      >
+                        {showApiKey ? "visibility_off" : "visibility"}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+            {/* Local LLM settings */}
+            {activeLocalProvider && (
+              <div>
+                <div
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: "#c9d1d9",
+                    marginBottom: 8,
+                  }}
+                >
+                  {activeLocalProvider === "ollama"
+                    ? t("settings.ollamaModel")
+                    : t("settings.lmstudioModel")}
+                  {localAvailable === true && (
+                    <span
+                      style={{ marginLeft: 8, fontSize: 11, color: "#3fb950" }}
+                    >
+                      {activeLocalProvider === "ollama"
+                        ? t("settings.ollamaRunning")
+                        : t("settings.lmstudioRunning")}
+                    </span>
+                  )}
+
+                  {localAvailable === false && (
+                    <span
+                      style={{ marginLeft: 8, fontSize: 11, color: "#f85149" }}
+                    >
+                      {activeLocalProvider === "ollama"
+                        ? t("settings.ollamaNotRunning")
+                        : t("settings.lmstudioNotRunning")}
+                    </span>
+                  )}
+                </div>
+                <div
+                  style={{ display: "flex", flexDirection: "column", gap: 10 }}
+                >
+                  <input
+                    type="text"
+                    value={activeLocalBaseUrl}
+                    onChange={(e) => {
+                      if (activeLocalProvider === "ollama") {
+                        setAiOllamaBaseUrl(e.target.value);
+                      } else {
+                        setAiLmStudioBaseUrl(e.target.value);
+                      }
+                    }}
+                    placeholder={
+                      activeLocalProvider === "ollama"
+                        ? "http://localhost:11434"
+                        : "http://localhost:1234"
+                    }
+                    style={{
+                      width: "100%",
+                      boxSizing: "border-box",
+                      background: "#10141a",
+                      border: "1px solid #414752",
+                      borderRadius: 4,
+                      padding: "8px 12px",
+                      color: "#dfe2eb",
+                      fontSize: 13,
+                      outline: "none",
                       fontFamily: "Roboto Mono, monospace",
                     }}
                   />
-                  <button
-                    onClick={() => setShowApiKey(!showApiKey)}
-                    style={{ background: "transparent", border: "1px solid #414752", borderRadius: 4, padding: "8px 10px", color: "#8b949e", cursor: "pointer", fontSize: 13 }}
-                    title={showApiKey ? t("settings.hideKey") : t("settings.showKey")}
-                  >
-                    <span className="material-icons" style={{ fontSize: 16, verticalAlign: "middle" }}>
-                      {showApiKey ? "visibility_off" : "visibility"}
-                    </span>
-                  </button>
+                  <div style={{ fontSize: 11, color: "#8b949e" }}>
+                    {activeLocalProvider === "ollama"
+                      ? "Ollama endpoint, for example http://localhost:11434"
+                      : "LM Studio endpoint, for example http://localhost:1234"}
+                  </div>
                 </div>
-              </div>
-            )}
-
-            {/* Ollama model selector */}
-            {aiProvider === "ollama" && (
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "#c9d1d9", marginBottom: 8 }}>
-                  {t("settings.ollamaModel")}
-                  {ollamaAvailable === true && (
-                    <span style={{ marginLeft: 8, fontSize: 11, color: "#3fb950" }}>{t("settings.ollamaRunning")}</span>
-                  )}
-                  {ollamaAvailable === false && (
-                    <span style={{ marginLeft: 8, fontSize: 11, color: "#f85149" }}>{t("settings.ollamaNotRunning")}</span>
-                  )}
-                </div>
-                {ollamaModels.length > 0 ? (
+                {localModels.length > 0 ? (
                   <select
-                    value={aiOllamaModel}
-                    onChange={(e) => setAiOllamaModel(e.target.value)}
+                    value={activeLocalModel}
+                    onChange={(e) => {
+                      if (activeLocalProvider === "ollama") {
+                        setAiOllamaModel(e.target.value);
+                      } else {
+                        setAiLmStudioModel(e.target.value);
+                      }
+                    }}
                     style={{
-                      background: "#10141a", border: "1px solid #414752", borderRadius: 4,
-                      padding: "8px 12px", color: "#dfe2eb", fontSize: 13, outline: "none", width: "100%",
+                      background: "#10141a",
+                      border: "1px solid #414752",
+                      borderRadius: 4,
+                      padding: "8px 12px",
+                      color: "#dfe2eb",
+                      fontSize: 13,
+                      outline: "none",
+                      width: "100%",
                     }}
                   >
-                    {ollamaModels.map((m) => (
-                      <option key={m} value={m}>{m}</option>
+                    {localModels.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
                     ))}
                   </select>
                 ) : (
                   <input
                     type="text"
-                    value={aiOllamaModel}
-                    onChange={(e) => setAiOllamaModel(e.target.value)}
-                    placeholder={t("settings.ollamaPlaceholder")}
+                    value={activeLocalModel}
+                    onChange={(e) => {
+                      if (activeLocalProvider === "ollama") {
+                        setAiOllamaModel(e.target.value);
+                      } else {
+                        setAiLmStudioModel(e.target.value);
+                      }
+                    }}
+                    placeholder={
+                      activeLocalProvider === "ollama"
+                        ? t("settings.ollamaPlaceholder")
+                        : t("settings.lmstudioPlaceholder")
+                    }
                     style={{
-                      width: "100%", boxSizing: "border-box", background: "#10141a", border: "1px solid #414752",
-                      borderRadius: 4, padding: "8px 12px", color: "#dfe2eb", fontSize: 13, outline: "none",
+                      width: "100%",
+                      boxSizing: "border-box",
+                      background: "#10141a",
+                      border: "1px solid #414752",
+                      borderRadius: 4,
+                      padding: "8px 12px",
+                      color: "#dfe2eb",
+                      fontSize: 13,
+                      outline: "none",
                     }}
                   />
                 )}
@@ -768,15 +1320,25 @@ export default function Settings() {
               <button
                 onClick={handleSaveAI}
                 style={{
-                  background: aiSaved ? "#27a640" : "#58a6ff", color: "#001c38", border: "none",
-                  borderRadius: 4, padding: "9px 20px", fontWeight: 700, fontSize: 12, cursor: "pointer",
-                  letterSpacing: "0.05em", textTransform: "uppercase", transition: "background 0.2s",
+                  background: aiSaved ? "#27a640" : "#58a6ff",
+                  color: "#001c38",
+                  border: "none",
+                  borderRadius: 4,
+                  padding: "9px 20px",
+                  fontWeight: 700,
+                  fontSize: 12,
+                  cursor: "pointer",
+                  letterSpacing: "0.05em",
+                  textTransform: "uppercase",
+                  transition: "background 0.2s",
                 }}
               >
                 {aiSaved ? t("settings.aiSaved") : t("settings.saveAI")}
               </button>
               {aiProvider !== "none" && (
-                <span style={{ marginLeft: 12, fontSize: 11, color: "#8b949e" }}>
+                <span
+                  style={{ marginLeft: 12, fontSize: 11, color: "#8b949e" }}
+                >
                   {t("settings.aiUsedFor")}
                 </span>
               )}

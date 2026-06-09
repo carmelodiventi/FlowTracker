@@ -129,6 +129,10 @@ export const en = {
     ollamaRunning: "● Running",
     ollamaNotRunning: "● Not running — start Ollama first",
     ollamaPlaceholder: "e.g. llama3.2, mistral, phi3",
+    lmstudioModel: "LM Studio Model",
+    lmstudioRunning: "● Running",
+    lmstudioNotRunning: "● Not running — start LM Studio first",
+    lmstudioPlaceholder: "e.g. llama3.2, mistral, phi3",
     saveAI: "Save AI Settings",
     aiSaved: "✓ Saved",
     aiUsedFor:

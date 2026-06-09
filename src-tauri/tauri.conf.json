@@ -37,9 +37,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [
-      "icons/tray-icon.png"
-    ],
+    "resources": ["icons/tray-icon.png"],
     "macOS": {
       "infoPlist": "Info.plist"
     }
